@@ -77,7 +77,7 @@ class SkillPack(ABC):
         - Short keywords (tickers): exact word match
         - Hyphenated keywords (btc-usd): substring match
         - Longer keywords: check if keyword appears in any word or vice versa
-        - Need at least 2 matches for confidence
+        - Keep auto-loading conservative: usually require 3+ meaningful matches
 
         Override for embedding-based matching in the future.
         """
@@ -88,8 +88,6 @@ class SkillPack(ABC):
         # Tokenize: split on spaces, commas, periods — keep hyphens intact
         input_words = set(input_lower.replace(",", " ").replace(".", " ").replace(":", " ").split())
         # Also add the raw input for substring matching of hyphenated terms
-        input_joined = " " + input_lower + " "
-
         matches = 0
         for kw in self.keywords:
             kw_lower = kw.lower()
@@ -112,9 +110,13 @@ class SkillPack(ABC):
                         matches += 1
                         break
 
-        # Scoring: need at least 2 matches for confidence
-        if matches < 2:
-            return matches * 0.15
-        # Scale by match count, not keyword list size
-        # 2 matches = 0.5, 3 = 0.7, 4+ = 0.85+
-        return min(1.0, 0.3 + matches * 0.15)
+        # Keep confidence low unless we see several domain-specific signals.
+        if matches <= 1:
+            return matches * 0.1
+        if matches == 2:
+            return 0.35
+        if matches == 3:
+            return 0.55
+        if matches == 4:
+            return 0.7
+        return min(1.0, 0.75 + (matches - 5) * 0.05)

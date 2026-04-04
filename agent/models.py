@@ -66,11 +66,49 @@ class ToolParameter(BaseModel):
     default: Any = None
 
 
+class ToolGroup(str, Enum):
+    CORE = "core"
+    SKILL = "skill"
+    RETRIEVAL = "retrieval"
+    RUNTIME = "runtime"
+    ADMIN = "admin"
+
+
+class ToolLoadingStrategy(str, Enum):
+    ALWAYS = "always"
+    FEATURE_GATED = "feature_gated"
+    RUNTIME_INJECTED = "runtime_injected"
+
+
+class PermissionAction(str, Enum):
+    ALLOW = "allow"
+    ASK = "ask"
+    DENY = "deny"
+
+
+class PermissionMode(str, Enum):
+    PLAN = "plan"
+    DEFAULT = "default"
+    ACCEPT_EDITS = "accept_edits"
+    AUTO = "auto"
+    DONT_ASK = "dont_ask"
+
+
 class ToolDef(BaseModel):
     """Definition of a tool the agent can call."""
     name: str
     description: str
     parameters: list[ToolParameter]
+    is_read_only: bool = False
+    is_concurrency_safe: bool = False
+    requires_confirmation: bool = True
+    is_networked: bool = False
+    mutates_state: bool = True
+    is_destructive: bool = False
+    tool_group: ToolGroup = ToolGroup.CORE
+    loading_strategy: ToolLoadingStrategy = ToolLoadingStrategy.ALWAYS
+    feature_flag: str | None = None
+    visible: bool = True
 
     def to_openai_schema(self) -> dict[str, Any]:
         """Convert to OpenAI function-calling schema."""
@@ -118,6 +156,33 @@ class ToolResult(BaseModel):
     content: str  # JSON string or plain text
     success: bool = True
     error: str | None = None
+    summary: str | None = None
+    structured_data: dict[str, Any] | None = None
+    context_modifier: dict[str, Any] | None = None
+
+
+class PermissionDecision(BaseModel):
+    action: PermissionAction
+    reason: str
+    rule_source: str | None = None
+    requires_user_input: bool = False
+    can_auto_approve: bool = False
+
+
+class ApprovalRule(BaseModel):
+    tool_name: str
+    action: PermissionAction
+    mode_scope: PermissionMode | None = None
+    command_prefix: str | None = None
+    path_prefix: str | None = None
+    session_only: bool = True
+
+
+class PendingApproval(BaseModel):
+    tool_call: ToolCall
+    decision: PermissionDecision
+    options: list[str] = Field(default_factory=lambda: ["approve_once", "approve_session", "deny"])
+    created_at: float = Field(default_factory=time.time)
 
 
 # ---------------------------------------------------------------------------

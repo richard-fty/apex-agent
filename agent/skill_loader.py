@@ -125,7 +125,7 @@ class SkillLoader:
             return [s.heading for s in analyzed.reference_sections]
         return []
 
-    def pre_load_by_intent(self, user_input: str, threshold: float = 0.4) -> list[str]:
+    def pre_load_by_intent(self, user_input: str, threshold: float = 0.6) -> list[str]:
         """Pre-load skills that match the user's input before the first LLM call.
 
         This saves one tool-call round-trip — the agent gets the skill's tools

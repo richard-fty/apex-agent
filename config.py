@@ -34,10 +34,27 @@ MODEL_CONTEXT_WINDOWS: dict[str, ModelConfig] = {
     "deepseek/deepseek-reasoner": ModelConfig(max_tokens=64_000, reserved_for_output=4096),
 }
 
+MODEL_PROVIDER_ENV: dict[str, str] = {
+    "anthropic/claude-sonnet-4-20250514": "ANTHROPIC_API_KEY",
+    "anthropic/claude-haiku-4-5-20251001": "ANTHROPIC_API_KEY",
+    "anthropic/claude-opus-4-0-20250514": "ANTHROPIC_API_KEY",
+    "gpt-4o": "OPENAI_API_KEY",
+    "gpt-4o-mini": "OPENAI_API_KEY",
+    "gemini/gemini-1.5-pro": "GOOGLE_API_KEY",
+    "gemini/gemini-1.5-flash": "GOOGLE_API_KEY",
+    "deepseek/deepseek-chat": "DEEPSEEK_API_KEY",
+    "deepseek/deepseek-reasoner": "DEEPSEEK_API_KEY",
+}
+
 
 def get_model_config(model: str) -> ModelConfig:
     """Get context window config for a model, falling back to defaults."""
     return MODEL_CONTEXT_WINDOWS.get(model, ModelConfig())
+
+
+def get_model_provider_env(model: str) -> str | None:
+    """Return the required API key env var for a model, if known."""
+    return MODEL_PROVIDER_ENV.get(model)
 
 
 class Settings(BaseSettings):
@@ -50,9 +67,48 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    hf_token: str = Field(default="", alias="HF_TOKEN")
+    tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
+
+    # Embedding / reranking provider: "siliconflow" or "huggingface"
+    embedding_provider: str = Field(default="siliconflow", alias="EMBEDDING_PROVIDER")
+
+    # SiliconFlow settings (preferred — no cold start, free bge-m3)
+    siliconflow_api_key: str = Field(default="", alias="SILICONFLOW_API_KEY")
+    siliconflow_base_url: str = Field(
+        default="https://api.siliconflow.cn/v1",
+        alias="SILICONFLOW_BASE_URL",
+    )
+    siliconflow_embedding_model: str = Field(
+        default="BAAI/bge-m3",
+        alias="SILICONFLOW_EMBEDDING_MODEL",
+    )
+    siliconflow_rerank_model: str = Field(
+        default="BAAI/bge-reranker-v2-m3",
+        alias="SILICONFLOW_RERANK_MODEL",
+    )
+
+    # HuggingFace settings (fallback)
+    hf_embedding_model: str = Field(
+        default="intfloat/multilingual-e5-large",
+        alias="HF_EMBEDDING_MODEL",
+    )
+    hf_embedding_url: str = Field(default="", alias="HF_EMBEDDING_URL")
+    hf_rerank_model: str = Field(
+        default="sentence-transformers/msmarco-distilbert-base-tas-b",
+        alias="HF_RERANK_MODEL",
+    )
+    hf_rerank_url: str = Field(default="", alias="HF_RERANK_URL")
+    rag_rerank_mode: str = Field(default="auto", alias="RAG_RERANK_MODE")
+    rag_rerank_min_candidates: int = Field(default=8, alias="RAG_RERANK_MIN_CANDIDATES")
+    rag_rerank_max_candidates: int = Field(default=100, alias="RAG_RERANK_MAX_CANDIDATES")
 
     # Default model for agent runs
     default_model: str = Field(default="deepseek/deepseek-chat")
+    response_language: str = Field(
+        default="Chinese",
+        description="Default assistant response language, e.g. Chinese or English",
+    )
 
     # Agent loop
     max_steps: int = Field(default=20, description="Max tool-call steps per run")
@@ -67,6 +123,9 @@ class Settings(BaseSettings):
     # Compressor model (cheap/fast model for summarization)
     compressor_model: str = Field(default="gpt-4o-mini")
 
+    # Retrieval / knowledge base
+    enable_rag: bool = Field(default=True, description="Enable retrieval and knowledge-base tools")
+
     # Paths
     charts_dir: str = Field(default="charts")
     strategies_dir: str = Field(default="strategies")
@@ -74,3 +133,19 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def is_model_available(model: str) -> tuple[bool, str | None]:
+    """Check whether the configured environment supports the given model."""
+    required_env = get_model_provider_env(model)
+    if required_env is None:
+        return True, None
+    value = getattr(settings, required_env.lower(), "")
+    if value:
+        return True, required_env
+    return False, required_env
+
+
+def list_known_models() -> list[str]:
+    """Return known model ids in stable display order."""
+    return list(MODEL_CONTEXT_WINDOWS.keys())

@@ -1,4 +1,4 @@
-"""Textual CSS styles for the Agent Harness TUI."""
+"""Textual CSS styles for the Relay TUI."""
 
 APP_CSS = """
 Screen {

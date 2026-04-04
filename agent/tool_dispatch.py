@@ -9,7 +9,7 @@ import json
 import traceback
 from typing import Any, Callable, Awaitable
 
-from agent.models import ToolCall, ToolDef, ToolResult
+from agent.models import ToolCall, ToolDef, ToolGroup, ToolLoadingStrategy, ToolResult
 
 
 # Type for tool handler functions
@@ -37,9 +37,51 @@ class ToolDispatch:
     def tool_names(self) -> list[str]:
         return list(self._tools.keys())
 
-    def to_openai_tools(self) -> list[dict[str, Any]]:
+    def get_tool_def(self, name: str) -> ToolDef | None:
+        return self._tools.get(name)
+
+    def list_tool_defs(
+        self,
+        *,
+        include_runtime_injected: bool = False,
+        groups: set[ToolGroup] | None = None,
+    ) -> list[ToolDef]:
+        tools = list(self._tools.values())
+        filtered = [
+            td for td in tools
+            if (td.visible or (
+                include_runtime_injected
+                and td.loading_strategy == ToolLoadingStrategy.RUNTIME_INJECTED
+            ))
+            and (groups is None or td.tool_group in groups)
+            and (
+                include_runtime_injected
+                or td.loading_strategy != ToolLoadingStrategy.RUNTIME_INJECTED
+            )
+        ]
+        order = {
+            ToolGroup.CORE: 0,
+            ToolGroup.SKILL: 1,
+            ToolGroup.RETRIEVAL: 2,
+            ToolGroup.RUNTIME: 3,
+            ToolGroup.ADMIN: 4,
+        }
+        return sorted(filtered, key=lambda td: (order.get(td.tool_group, 99), td.name))
+
+    def to_openai_tools(
+        self,
+        *,
+        include_runtime_injected: bool = False,
+        groups: set[ToolGroup] | None = None,
+    ) -> list[dict[str, Any]]:
         """Generate OpenAI-format tool schemas for LLM request."""
-        return [td.to_openai_schema() for td in self._tools.values()]
+        return [
+            td.to_openai_schema()
+            for td in self.list_tool_defs(
+                include_runtime_injected=include_runtime_injected,
+                groups=groups,
+            )
+        ]
 
     def parse_tool_calls(self, raw_tool_calls: list[dict[str, Any]]) -> list[ToolCall]:
         """Parse raw tool calls from LLM response into ToolCall objects."""
@@ -91,6 +133,7 @@ class ToolDispatch:
                 content=error,
                 success=False,
                 error=error,
+                summary=error,
             )
 
         handler = self._handlers[tool_call.name]
@@ -104,6 +147,7 @@ class ToolDispatch:
                 name=tool_call.name,
                 content=str(result),
                 success=True,
+                summary=str(result)[:240],
             )
         except Exception as e:
             tb = traceback.format_exc()
@@ -113,6 +157,7 @@ class ToolDispatch:
                 content=f"Error executing {tool_call.name}: {e}",
                 success=False,
                 error=f"{e}\n{tb}",
+                summary=f"Error executing {tool_call.name}: {e}",
             )
 
     def retry_prompt(self, tool_call: ToolCall, error: str) -> str:

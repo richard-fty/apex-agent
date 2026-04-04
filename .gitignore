@@ -7,3 +7,6 @@ charts/
 strategies/
 .claude/
 *.egg-info/
+rag_store/
+.tmp/
+.pytest_cache/

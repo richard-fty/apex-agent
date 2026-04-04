@@ -1,113 +1,69 @@
-"""Access control — tool allowlist/blocklist per session.
-
-Controls which tools the agent is allowed to call. Used for:
-  - Benchmarking: restrict tools to test agent behavior under constraints
-  - Safety: block dangerous tools (run_command, write_file) in untrusted scenarios
-  - Research: test how models handle denied tool calls
-"""
+"""Access control and human-in-the-loop approval for agent tool use."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent.models import ToolCall
-
-
-@dataclass
-class AccessPolicy:
-    """Defines what the agent is allowed to do."""
-
-    # If set, ONLY these tools are allowed (whitelist mode)
-    allowed_tools: set[str] | None = None
-
-    # These tools are always blocked (blacklist mode)
-    blocked_tools: set[str] = field(default_factory=set)
-
-    # Max calls per tool (0 = unlimited)
-    tool_call_limits: dict[str, int] = field(default_factory=dict)
-
-    # Tools that require confirmation (for future TUI integration)
-    confirm_tools: set[str] = field(default_factory=set)
-
-
-# Preset policies
-POLICY_UNRESTRICTED = AccessPolicy()
-
-POLICY_READONLY = AccessPolicy(
-    blocked_tools={"write_file", "edit_file", "run_command"},
+from agent.models import (
+    PermissionDecision,
+    PendingApproval,
+    ToolCall,
+    ToolDef,
 )
-
-POLICY_NO_SHELL = AccessPolicy(
-    blocked_tools={"run_command"},
-)
-
-POLICY_TOOLS_ONLY = AccessPolicy(
-    blocked_tools={"run_command", "write_file", "edit_file", "web_fetch", "web_search"},
-)
-
-PRESET_POLICIES: dict[str, AccessPolicy] = {
-    "unrestricted": POLICY_UNRESTRICTED,
-    "readonly": POLICY_READONLY,
-    "no_shell": POLICY_NO_SHELL,
-    "tools_only": POLICY_TOOLS_ONLY,
-}
-
-
-def get_policy(name: str) -> AccessPolicy:
-    """Get a preset policy by name."""
-    policy = PRESET_POLICIES.get(name)
-    if policy is None:
-        available = ", ".join(PRESET_POLICIES.keys())
-        raise ValueError(f"Unknown policy: {name}. Available: {available}")
-    return policy
+from harness.approval_manager import ApprovalManager
+from harness.permission_policy import PermissionPolicyEngine
+from harness.policy_models import AccessPolicy, PRESET_POLICIES, get_policy
 
 
 @dataclass
 class AccessController:
-    """Enforces access control during an agent run."""
+    """Evaluate permission decisions and manage resumable approvals."""
 
     policy: AccessPolicy
     call_counts: dict[str, int] = field(default_factory=dict)
-    denied_calls: list[dict[str, Any]] = field(default_factory=list)
+    approval_manager: ApprovalManager = field(default_factory=ApprovalManager)
+    permission_engine: PermissionPolicyEngine = field(default_factory=PermissionPolicyEngine)
 
-    def check(self, tool_call: ToolCall) -> str | None:
-        """Check if a tool call is allowed.
+    def __post_init__(self) -> None:
+        self.approval_manager.mode_scope = self.policy.mode
 
-        Returns None if allowed, or a denial reason string.
-        """
-        name = tool_call.name
+    def evaluate(self, tool_call: ToolCall, tool_def: ToolDef) -> PermissionDecision:
+        """Return a structured allow/ask/deny decision for a tool call."""
+        return self.permission_engine.evaluate(
+            policy=self.policy,
+            approval_rules=self.approval_manager.approval_rules,
+            call_counts=self.call_counts,
+            denied_calls=self.approval_manager.denied_calls,
+            tool_call=tool_call,
+            tool_def=tool_def,
+        )
 
-        # Blocklist check
-        if name in self.policy.blocked_tools:
-            reason = f"Tool '{name}' is blocked by access policy"
-            self.denied_calls.append({"tool": name, "reason": reason})
-            return reason
+    def create_pending(self, tool_call: ToolCall, decision: PermissionDecision) -> PendingApproval:
+        return self.approval_manager.create_pending(tool_call, decision)
 
-        # Allowlist check
-        if self.policy.allowed_tools is not None and name not in self.policy.allowed_tools:
-            reason = f"Tool '{name}' is not in the allowed tools list"
-            self.denied_calls.append({"tool": name, "reason": reason})
-            return reason
+    def resolve_pending(self, action: str) -> PermissionDecision | None:
+        return self.approval_manager.resolve_pending(action)
 
-        # Rate limit check
-        if name in self.policy.tool_call_limits:
-            limit = self.policy.tool_call_limits[name]
-            current = self.call_counts.get(name, 0)
-            if limit > 0 and current >= limit:
-                reason = f"Tool '{name}' call limit reached ({limit})"
-                self.denied_calls.append({"tool": name, "reason": reason})
-                return reason
-
-        # Allowed — increment counter
-        self.call_counts[name] = self.call_counts.get(name, 0) + 1
-        return None
+    def record_allow(self, tool_name: str) -> None:
+        self.call_counts[tool_name] = self.call_counts.get(tool_name, 0) + 1
 
     def summary(self) -> dict[str, Any]:
-        """Return access control summary."""
         return {
+            "mode": self.policy.mode.value,
             "total_calls": sum(self.call_counts.values()),
             "call_counts": dict(self.call_counts),
-            "denied_count": len(self.denied_calls),
-            "denied_calls": self.denied_calls,
+            **self.approval_manager.summary(),
         }
+
+    @property
+    def pending(self) -> PendingApproval | None:
+        return self.approval_manager.pending
+
+    @property
+    def approval_rules(self) -> list[Any]:
+        return self.approval_manager.approval_rules
+
+    @property
+    def denied_calls(self) -> list[dict[str, Any]]:
+        return self.approval_manager.denied_calls

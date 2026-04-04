@@ -1,4 +1,4 @@
-"""Agent Harness TUI — clean, minimal design inspired by Claude Code.
+"""Relay TUI — clean, minimal design inspired by Claude Code.
 
 No color borders. No labels. Clean whitespace. Spinner above prompt while thinking.
 
@@ -12,15 +12,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import time
+from pathlib import Path
 from typing import Any
 
 logging.basicConfig(level=logging.ERROR)
 logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
-
-import litellm
-litellm.suppress_debug_info = True
 
 from rich.markdown import Markdown
 from rich.text import Text
@@ -29,23 +26,18 @@ from rich.table import Table
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Container, VerticalScroll
 from textual.widgets import Footer, Input, Static
 from textual.reactive import reactive
 from textual.timer import Timer
 
-from agent.context.manager import ContextManager
 from agent.models import TokenUsage
-from agent.prompts import build_system_prompt
-from agent.skill_loader import SkillLoader
-from agent.tool_dispatch import ToolDispatch
-from harness.access_control import AccessController, AccessPolicy, get_policy
+from agent.shared_runner import RunnerEvent, SharedTurnRunner
+from agent.session_engine import SessionEngine
+from harness.access_control import AccessController, get_policy
 from harness.cost_tracker import CostTracker
-from harness.runtime import RuntimeConfig, RuntimeGuard
-from harness.token_tracker import extract_usage
-from tools.base import get_all_builtin_tools
-from tools.skill_meta import SkillMetaTools
-from config import settings
+from harness.runtime import RuntimeConfig
+from config import is_model_available, list_known_models, settings
 
 _SKILL_MUTATING_TOOLS = {"load_skill", "unload_skill"}
 
@@ -162,9 +154,12 @@ class MainOutput(VerticalScroll):
 
     def user_msg(self, text: str) -> None:
         self._append(Static(
-            Text.from_markup(f"\n[bold]❯[/bold] {text}\n"),
+            Text.from_markup(f"\n[bold]You[/bold]  {text}\n"),
             classes="user-msg",
         ))
+
+    def divider(self) -> None:
+        self._append(Static(Text.from_markup("  [dim]···[/dim]"), classes="info"))
 
     def agent_thinking(self, text: str) -> None:
         if text:
@@ -190,16 +185,41 @@ class MainOutput(VerticalScroll):
 
     def tool_call(self, name: str, args: dict, success: bool, duration_ms: float, preview: str) -> None:
         icon = "✓" if success else "✗"
-        color = "green" if success else "red"
-        args_short = ", ".join(f"{k}={repr(v)[:30]}" for k, v in args.items())
-        self._append(Static(Text.from_markup(
-            f"  [{color}]{icon}[/{color}] [dim]{name}({args_short}) · {duration_ms:.0f}ms[/dim]"
-        ), classes="tool-call"))
+        args_short = ", ".join(f"{k}={repr(v)[:28]}" for k, v in args.items()) or "no args"
+        preview = preview.strip().replace("\n", " ")
+        if len(preview) > 100:
+            preview = preview[:100] + "..."
+        text = Text()
+        text.append("\n  ")
+        text.append(icon, style="green" if success else "red")
+        text.append(f" {name}", style="bold")
+        text.append(f" · {duration_ms:.0f}ms", style="dim")
+        text.append("\n  ")
+        text.append("args:", style="dim")
+        text.append(f" {args_short}")
+        text.append("\n  ")
+        if preview:
+            text.append(preview)
+        else:
+            text.append("No output", style="dim")
+        text.append("\n")
+        self._append(Static(text, classes="tool-call"))
 
     def tool_denied(self, name: str, reason: str) -> None:
         self._append(Static(Text.from_markup(
-            f"  [red]⊘[/red] [dim]{name} — {reason}[/dim]"
+            f"\n  [red]⊘[/red] [bold]{name}[/bold]\n"
+            f"  [dim]{reason}[/dim]\n"
         ), classes="tool-call"))
+
+    def approval_card(self, tool_name: str, reason: str) -> None:
+        self._append(Static(Text.from_markup(
+            "\n"
+            "  [bold yellow]Approval needed[/bold yellow]\n"
+            f"  [bold]{tool_name}[/bold]\n"
+            f"  [dim]{reason}[/dim]\n"
+            "\n"
+            "  [dim]/approve once  /approve_session  /deny  /deny_session[/dim]\n"
+        ), classes="approval-card"))
 
     def info(self, text: str) -> None:
         self._append(Static(Text.from_markup(f"[dim]{text}[/dim]"), classes="info"))
@@ -231,32 +251,155 @@ class MainOutput(VerticalScroll):
         self._append(Static(table))
         self._append(Static(Text("")))
 
+    def show_models(self, current_model: str) -> None:
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("", style="dim", width=36)
+        table.add_column("")
+        for model in list_known_models():
+            available, required_env = is_model_available(model)
+            status = "ready" if available else f"missing {required_env}"
+            label = f"{model} (current)" if model == current_model else model
+            table.add_row(label, status)
+        self._append(Static(table))
+        self._append(Static(Text("")))
+
 
 class StatusBar(Static):
-    """Minimal status bar — model + cost + tokens."""
+    """Minimal prompt-adjacent status line."""
 
     DEFAULT_CSS = """
     StatusBar {
         height: 1;
-        dock: bottom;
-        background: $surface;
         color: $text-muted;
         padding: 0 2;
     }
     """
 
-    def set(self, model: str, cost: float, tokens: int, skills: list[str]) -> None:
+    def set(self, model: str, cost: float, tokens: int, skills: list[str], app_name: str) -> None:
         model_short = model.split("/")[-1] if "/" in model else model
-        parts = [model_short, f"${cost:.4f}", f"{tokens:,} tokens"]
+        parts = [model_short, app_name, f"${cost:.4f}", f"{tokens:,} tokens"]
         if skills:
             parts.append(f"skills: {', '.join(skills)}")
         self.update(" · ".join(parts))
 
 
-class AgentHarnessApp(App):
+class ApprovalSelector(Static):
+    """Prompt replacement used while waiting for approval."""
+
+    DEFAULT_CSS = """
+    ApprovalSelector {
+        height: auto;
+        padding: 0 2 1 2;
+        color: $text;
+    }
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._options: list[tuple[str, str]] = [
+            ("approve_once", "Allow once"),
+            ("approve_session", "Allow session"),
+            ("deny", "Deny"),
+            ("deny_session", "Deny session"),
+        ]
+        self._selected = 0
+        self.display = False
+        self._tool_name = ""
+        self._reason = ""
+
+    def show_request(self, tool_name: str, reason: str) -> None:
+        self._tool_name = tool_name
+        self._reason = reason
+        self._selected = 0
+        self.display = True
+        self._refresh_content()
+
+    def clear_request(self) -> None:
+        self.display = False
+        self._tool_name = ""
+        self._reason = ""
+        self.update("")
+
+    def move_selection(self, delta: int) -> None:
+        self._selected = (self._selected + delta) % len(self._options)
+        self._refresh_content()
+
+    def selected_action(self) -> str:
+        return self._options[self._selected][0]
+
+    def _refresh_content(self) -> None:
+        lines = [
+            f"[bold yellow]Approval needed[/bold yellow]  [bold]{self._tool_name}[/bold]",
+            f"[dim]{self._reason}[/dim]",
+            "[dim]Use left/right to choose, Enter to confirm.[/dim]",
+        ]
+        option_lines = []
+        hotkeys = {
+            "approve_once": "Y",
+            "approve_session": "S",
+            "deny": "N",
+            "deny_session": "D",
+        }
+        for index, (action, label) in enumerate(self._options):
+            marker = "›" if index == self._selected else " "
+            style = "bold" if index == self._selected else "dim"
+            option_lines.append(
+                f"[{style}]{marker} [{hotkeys[action]}] {label}[/{style}]"
+            )
+        lines.append("  ".join(option_lines))
+        self.update(Text.from_markup("\n".join(lines)))
+
+
+class SlashCommandMenu(Static):
+    """Lightweight slash command picker."""
+
+    DEFAULT_CSS = """
+    SlashCommandMenu {
+        height: auto;
+        padding: 0 2;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._commands: list[tuple[str, str]] = []
+        self._selected = 0
+
+    def show_commands(self, commands: list[tuple[str, str]], selected: int = 0) -> None:
+        self._commands = commands
+        self._selected = max(0, min(selected, len(commands) - 1)) if commands else 0
+        if not commands:
+            self.update("")
+            return
+        lines = []
+        for index, (name, desc) in enumerate(commands[:8]):
+            marker = "›" if index == self._selected else " "
+            style = "bold" if index == self._selected else "dim"
+            lines.append(f"[{style}]{marker} {name}[/{style}] [dim]{desc}[/dim]")
+        self.update(Text.from_markup("\n".join(lines)))
+
+    def clear_commands(self) -> None:
+        self._commands = []
+        self._selected = 0
+        self.update("")
+
+    def move_selection(self, delta: int) -> None:
+        if not self._commands:
+            return
+        self._selected = (self._selected + delta) % len(self._commands[:8])
+        self.show_commands(self._commands, self._selected)
+
+    def selected_command(self) -> str | None:
+        if not self._commands:
+            return None
+        return self._commands[self._selected][0]
+
+
+class RelayApp(App):
     """Clean, minimal TUI — inspired by Claude Code."""
 
-    TITLE = "Agent Harness"
+    TITLE = "Relay"
     CSS = """
     Screen {
         layout: vertical;
@@ -272,7 +415,7 @@ class AgentHarnessApp(App):
     }
 
     .tool-call {
-        padding: 0 2;
+        padding: 0 2 0 2;
     }
 
     .info {
@@ -287,12 +430,22 @@ class AgentHarnessApp(App):
         padding: 0 2;
     }
 
+    .approval-card {
+        padding: 0 2;
+    }
+
+    #composer {
+        height: auto;
+        padding: 0 0 1 0;
+        background: $background;
+    }
+
     #prompt-input {
-        dock: bottom;
-        margin: 0 2 0 2;
+        margin: 0 2;
         border: none;
         background: $surface;
         padding: 0 1;
+        color: $text;
     }
 
     #prompt-input:focus {
@@ -325,62 +478,85 @@ class AgentHarnessApp(App):
         self._init_session()
 
     def _init_session(self) -> None:
-        self._dispatch = ToolDispatch()
-        for tool in get_all_builtin_tools():
-            self._dispatch.register(tool.to_tool_def(), tool.execute)
-
-        self._skill_loader = SkillLoader(self._dispatch)
-        self._skill_loader.discover()
-
-        meta_tools = SkillMetaTools(self._skill_loader)
-        for td, handler in meta_tools.get_tool_pairs():
-            self._dispatch.register(td, handler)
-
-        self._context_mgr = ContextManager(strategy_name=self._strategy, model=self._model)
+        self._session_engine = SessionEngine(model=self._model, context_strategy=self._strategy)
+        self._dispatch = self._session_engine.dispatch
+        self._skill_loader = self._session_engine.skill_loader
+        self._context_mgr = self._session_engine.context_mgr
         self._access = AccessController(policy=get_policy(self._policy_name))
         self._cost_tracker = CostTracker(model=self._model, budget_usd=self._budget)
+        self._runner = SharedTurnRunner(
+            session_engine=self._session_engine,
+            access_controller=self._access,
+            cost_tracker=self._cost_tracker,
+            model=self._model,
+            runtime_config=RuntimeConfig(
+                max_steps=settings.max_steps,
+                timeout_seconds=settings.timeout_seconds,
+            ),
+        )
         self._total_usage = TokenUsage()
         self._turn_count = 0
-
-        system_prompt = build_system_prompt(self._skill_loader)
-        self._messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt},
+        self._messages = self._session_engine.messages
+        self._slash_commands: list[tuple[str, str]] = [
+            ("/help", "show available commands"),
+            ("/models", "list models and key readiness"),
+            ("/model", "switch model"),
+            ("/strategy", "switch context strategy"),
+            ("/policy", "switch permission mode"),
+            ("/skills", "show loaded and available skills"),
+            ("/metrics", "show session metrics"),
+            ("/reset", "reset the session"),
+            ("/quit", "exit Relay"),
         ]
 
     def compose(self) -> ComposeResult:
         yield MainOutput(id="main-output")
-        yield ThinkingIndicator(id="thinking")
-        yield StatusBar(id="status-bar")
-        yield Input(placeholder="Message...", id="prompt-input")
+        with Container(id="composer"):
+            yield ThinkingIndicator(id="thinking")
+            yield ApprovalSelector(id="approval-selector")
+            yield SlashCommandMenu(id="slash-menu")
+            yield Input(placeholder="Ask Relay anything or type /help", id="prompt-input")
+            yield StatusBar(id="status-bar")
 
     def on_mount(self) -> None:
         self._update_status()
         self.query_one("#prompt-input", Input).focus()
         self._show_welcome()
 
+    def _set_prompt_mode(self, mode: str) -> None:
+        input_widget = self.query_one("#prompt-input", Input)
+        approval = self.query_one("#approval-selector", ApprovalSelector)
+        slash_menu = self.query_one("#slash-menu", SlashCommandMenu)
+        if mode == "approval":
+            input_widget.display = False
+            slash_menu.display = False
+            approval.display = True
+        else:
+            approval.clear_request()
+            approval.display = False
+            input_widget.display = True
+            slash_menu.display = True
+            input_widget.focus()
+
     def _show_welcome(self) -> None:
         output = self.query_one("#main-output", MainOutput)
         model_short = self._model.split("/")[-1] if "/" in self._model else self._model
-        skills = self._skill_loader.get_available_skill_names()
-        skill_list = ", ".join(skills) if skills else "none"
 
         output._append(Static(Text.from_markup(
             "\n"
-            "  [bold]Agent Harness[/bold]\n"
+            "  [bold]Relay[/bold]\n"
             "\n"
-            f"  General-purpose autonomous agent with benchmark harness.\n"
-            f"  Built-in tools for files, shell, and web.\n"
-            f"  Skill packs loaded on demand.\n"
+            "  A personal terminal agent for research, files, shell, and the web.\n"
             "\n"
-            f"  [dim]Model:[/dim]  {model_short}\n"
-            f"  [dim]Skills:[/dim] {skill_list}\n"
-            f"  [dim]Policy:[/dim] {self._policy_name}\n"
+            f"  [dim]Model[/dim]   {model_short}\n"
+            f"  [dim]Policy[/dim]  {self._policy_name}\n"
             "\n"
-            "  [dim]Tips:[/dim]\n"
-            "  [dim]  Ask anything — the agent loads skills as needed[/dim]\n"
-            "  [dim]  /model <name> to switch models mid-session[/dim]\n"
-            "  [dim]  /help for all commands[/dim]\n"
+            "  [dim]Start with a question, or try:[/dim]\n"
+            "  [dim]  summarize this repo[/dim]\n"
+            "  [dim]  find where context is assembled[/dim]\n"
+            "  [dim]  /help[/dim]\n"
         )))
+        output.divider()
 
     def _update_status(self) -> None:
         self.query_one("#status-bar", StatusBar).set(
@@ -388,6 +564,7 @@ class AgentHarnessApp(App):
             self._cost_tracker.total_cost_usd,
             self._total_usage.total_tokens,
             self._skill_loader.get_loaded_skill_names(),
+            "Relay",
         )
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -403,201 +580,211 @@ class AgentHarnessApp(App):
         self.query_one("#main-output", MainOutput).user_msg(text)
         self._run_agent_turn(text)
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        menu = self.query_one("#slash-menu", SlashCommandMenu)
+        value = event.value.strip()
+        if not value.startswith("/"):
+            menu.clear_commands()
+            return
+        matches = [item for item in self._slash_commands if item[0].startswith(value) or value in item[0]]
+        menu.show_commands(matches)
+
+    def on_key(self, event) -> None:
+        input_widget = self.query_one("#prompt-input", Input)
+        approval = self.query_one("#approval-selector", ApprovalSelector)
+        menu = self.query_one("#slash-menu", SlashCommandMenu)
+
+        if self._access.pending is not None:
+            action_map = {
+                "y": "approve_once",
+                "s": "approve_session",
+                "n": "deny",
+                "d": "deny_session",
+            }
+            action = action_map.get(event.key)
+            if action:
+                approval.clear_request()
+                event.prevent_default()
+                self._resume_after_approval(action)
+                return
+            if event.key == "right":
+                approval.move_selection(1)
+                event.prevent_default()
+                return
+            if event.key == "left":
+                approval.move_selection(-1)
+                event.prevent_default()
+                return
+            if event.key == "enter":
+                event.prevent_default()
+                self._resume_after_approval(approval.selected_action())
+                return
+
+        if input_widget.display and input_widget.has_focus and input_widget.value.strip().startswith("/"):
+            if event.key == "down":
+                menu.move_selection(1)
+                event.prevent_default()
+                return
+            if event.key == "up":
+                menu.move_selection(-1)
+                event.prevent_default()
+                return
+            if event.key == "tab":
+                selected = menu.selected_command()
+                if selected:
+                    input_widget.value = selected + " "
+                    menu.clear_commands()
+                    input_widget.cursor_position = len(input_widget.value)
+                event.prevent_default()
+                return
+            if event.key == "enter":
+                selected = menu.selected_command()
+                if selected and input_widget.value.strip() != selected:
+                    input_widget.value = selected + " "
+                    menu.clear_commands()
+                    input_widget.cursor_position = len(input_widget.value)
+                    event.prevent_default()
+                    return
+
     @work(exclusive=True)
     async def _run_agent_turn(self, user_input: str) -> None:
         output = self.query_one("#main-output", MainOutput)
         thinking = self.query_one("#thinking", ThinkingIndicator)
         input_widget = self.query_one("#prompt-input", Input)
+        approval = self.query_one("#approval-selector", ApprovalSelector)
+        slash_menu = self.query_one("#slash-menu", SlashCommandMenu)
 
+        self._set_prompt_mode("input")
         input_widget.disabled = True
+        approval.clear_request()
+        slash_menu.clear_commands()
         thinking.show("Thinking")
 
         self._turn_count += 1
+        await self._consume_runner_events(
+            self._runner.start_turn(user_input),
+            output,
+            thinking,
+            input_widget,
+        )
 
-        # Pre-load skills by intent before first LLM call
-        pre_loaded = self._skill_loader.pre_load_by_intent(user_input)
-        if pre_loaded:
-            # Rebuild system prompt with newly loaded skills
-            new_prompt = build_system_prompt(self._skill_loader)
-            self._messages[0] = {"role": "system", "content": new_prompt}
-            for skill_name in pre_loaded:
-                output.info(f"  Skill auto-loaded: {skill_name}")
-            self._update_status()
+    @work(exclusive=True)
+    async def _resume_after_approval(self, action: str) -> None:
+        output = self.query_one("#main-output", MainOutput)
+        thinking = self.query_one("#thinking", ThinkingIndicator)
+        input_widget = self.query_one("#prompt-input", Input)
+        approval = self.query_one("#approval-selector", ApprovalSelector)
 
-        self._messages.append({"role": "user", "content": user_input})
+        self._set_prompt_mode("input")
+        input_widget.disabled = True
+        approval.clear_request()
+        thinking.show("Resuming after approval")
+        await self._consume_runner_events(
+            self._runner.resume_pending(action),
+            output,
+            thinking,
+            input_widget,
+        )
 
-        guard = RuntimeGuard(RuntimeConfig(
-            max_steps=settings.max_steps,
-            timeout_seconds=settings.timeout_seconds,
-        ))
-        step = 0
-
+    async def _consume_runner_events(
+        self,
+        events: Any,
+        output: MainOutput,
+        thinking: ThinkingIndicator,
+        input_widget: Input,
+    ) -> None:
+        streaming_started = False
+        approval = self.query_one("#approval-selector", ApprovalSelector)
         try:
-            while True:
-                limit_error = guard.check()
-                if limit_error:
-                    output.error_msg(limit_error)
-                    break
+            async for event in events:
+                event = event if isinstance(event, RunnerEvent) else RunnerEvent("error", {"message": "Invalid event"})
+                data = event.data
 
-                tools_schema = self._dispatch.to_openai_tools()
-                fitted = await self._context_mgr.prepare(self._messages, tools_schema)
-
-                thinking.show(f"Calling model (step {step})")
-
-                llm_start = time.time()
-                try:
-                    response = await litellm.acompletion(
-                        model=self._model,
-                        messages=fitted,
-                        tools=tools_schema if tools_schema else None,
-                        stream=True,
-                    )
-
-                    full_content = ""
-                    tool_calls_raw: list[dict] = []
-                    usage_data = None
-                    is_streaming_text = False
-
-                    async for chunk in response:
-                        delta = chunk.choices[0].delta if chunk.choices else None
-                        if delta is None:
-                            continue
-
-                        if delta.content:
-                            if not is_streaming_text:
-                                thinking.hide()
-                                output.stream_start()
-                                is_streaming_text = True
-                            full_content += delta.content
-                            output.stream_token(delta.content)
-
-                        if delta.tool_calls:
-                            for tc_delta in delta.tool_calls:
-                                idx = tc_delta.index
-                                while len(tool_calls_raw) <= idx:
-                                    tool_calls_raw.append({"id": "", "function": {"name": "", "arguments": ""}})
-                                if tc_delta.id:
-                                    tool_calls_raw[idx]["id"] = tc_delta.id
-                                if tc_delta.function:
-                                    if tc_delta.function.name:
-                                        tool_calls_raw[idx]["function"]["name"] = tc_delta.function.name
-                                    if tc_delta.function.arguments:
-                                        tool_calls_raw[idx]["function"]["arguments"] += tc_delta.function.arguments
-
-                        if hasattr(chunk, "usage") and chunk.usage:
-                            usage_data = chunk.usage
-
-                except Exception as e:
-                    thinking.hide()
-                    output.error_msg(f"LLM: {e}")
-                    break
-
-                llm_ms = (time.time() - llm_start) * 1000
-
-                if is_streaming_text:
-                    output.stream_end(full_content)
-
-                # Usage
-                usage = TokenUsage()
-                if usage_data:
-                    usage.prompt_tokens = getattr(usage_data, "prompt_tokens", 0) or 0
-                    usage.completion_tokens = getattr(usage_data, "completion_tokens", 0) or 0
-                    usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
-
-                self._total_usage.prompt_tokens += usage.prompt_tokens
-                self._total_usage.completion_tokens += usage.completion_tokens
-                self._total_usage.total_tokens += usage.total_tokens
-                self._cost_tracker.add_step(step, usage)
-                self._update_status()
-
-                budget_error = self._cost_tracker.check_budget()
-                if budget_error:
-                    thinking.hide()
-                    output.error_msg(budget_error)
-                    break
-
-                # Tool calls
-                if tool_calls_raw and tool_calls_raw[0]["function"]["name"]:
-                    thinking.hide()
-
-                    if full_content:
-                        output.agent_thinking(full_content)
-
-                    assistant_dict: dict[str, Any] = {"role": "assistant"}
-                    if full_content:
-                        assistant_dict["content"] = full_content
-                    assistant_dict["tool_calls"] = [
-                        {"id": tc["id"], "type": "function", "function": tc["function"]}
-                        for tc in tool_calls_raw
-                    ]
-                    self._messages.append(assistant_dict)
-
-                    parsed_calls = self._dispatch.parse_tool_calls(tool_calls_raw)
-                    skill_changed = False
-
-                    for tool_call in parsed_calls:
-                        thinking.show(f"Running {tool_call.name}")
-
-                        tool_start = time.time()
-
-                        access_denied = self._access.check(tool_call)
-                        if access_denied:
-                            result_content = f"Access denied: {access_denied}"
-                            result_success = False
-                            thinking.hide()
-                            output.tool_denied(tool_call.name, access_denied)
-                        elif (val_err := self._dispatch.validate_call(tool_call)):
-                            result_content = self._dispatch.retry_prompt(tool_call, val_err)
-                            result_success = False
-                        else:
-                            result = await self._dispatch.execute(tool_call)
-                            result_content = result.content
-                            result_success = result.success
-
-                        tool_ms = (time.time() - tool_start) * 1000
-                        result_content = self._context_mgr.compact_tool_result(result_content)
-
+                if event.type == "skill_auto_loaded":
+                    self._update_status()
+                elif event.type == "research_started":
+                    thinking.show("Preparing research context")
+                elif event.type == "local_search_started":
+                    thinking.show("Checking local knowledge")
+                elif event.type == "web_search_started":
+                    thinking.show("Searching the web")
+                elif event.type == "evidence_ready":
+                    sources = []
+                    if data["used_local"]:
+                        sources.append("local")
+                    if data["used_web"]:
+                        sources.append("web")
+                    source_text = ", ".join(sources) if sources else "none"
+                    output.info(f"  Research context ready: {data['items']} evidence item(s) from {source_text}")
+                elif event.type == "llm_call_started":
+                    thinking.show(f"Calling model (step {data['step']})")
+                elif event.type == "token":
+                    if not streaming_started:
                         thinking.hide()
-                        output.tool_call(
-                            tool_call.name, tool_call.arguments,
-                            result_success, tool_ms, result_content[:100],
-                        )
-
-                        self._messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.name,
-                            "content": result_content,
-                        })
-
-                        if tool_call.name in _SKILL_MUTATING_TOOLS:
-                            skill_changed = True
-
-                    if skill_changed:
-                        new_prompt = build_system_prompt(self._skill_loader)
-                        self._messages[0] = {"role": "system", "content": new_prompt}
-
-                    guard.increment_step()
-                    step += 1
-
-                else:
-                    # No tool calls — done
-                    if full_content and not is_streaming_text:
                         output.stream_start()
-                        output.stream_token(full_content)
-                        output.stream_end(full_content)
-                        self._messages.append({"role": "assistant", "content": full_content})
-                    elif full_content:
-                        self._messages.append({"role": "assistant", "content": full_content})
+                        streaming_started = True
+                    output.stream_token(data["text"])
+                elif event.type == "usage":
+                    usage = data["usage"]
+                    self._total_usage.prompt_tokens += usage.prompt_tokens
+                    self._total_usage.completion_tokens += usage.completion_tokens
+                    self._total_usage.total_tokens += usage.total_tokens
+                    self._update_status()
+                elif event.type == "assistant_note":
+                    if streaming_started:
+                        output.stream_end(data["text"])
+                        streaming_started = False
+                    else:
+                        output.agent_thinking(data["text"])
+                elif event.type == "tool_started":
+                    thinking.show(f"Running {data['name']}")
+                elif event.type == "tool_denied":
+                    thinking.hide()
+                    output.tool_denied(data["name"], data["reason"])
+                elif event.type == "approval_requested":
+                    thinking.hide()
+                    if streaming_started:
+                        output.stream_end("")
+                        streaming_started = False
+                    self._set_prompt_mode("approval")
+                    approval.show_request(data["tool_name"], data["reason"])
+                    return
+                elif event.type == "tool_finished":
+                    thinking.hide()
+                    output.tool_call(
+                        data["name"],
+                        data["arguments"],
+                        data["success"],
+                        data["duration_ms"],
+                        data["content"][:100],
+                    )
+                elif event.type == "turn_finished":
+                    if streaming_started:
+                        output.stream_end(data["content"])
+                        streaming_started = False
+                    elif data["content"]:
+                        output.stream_start()
+                        output.stream_token(data["content"])
+                        output.stream_end(data["content"])
+                    output.divider()
                     break
-
+                elif event.type == "error":
+                    thinking.hide()
+                    if streaming_started:
+                        output.stream_end("")
+                        streaming_started = False
+                    output.error_msg(data["message"])
+                    break
         except Exception as e:
             output.error_msg(str(e))
-
-        thinking.hide()
-        self._update_status()
-        input_widget.disabled = False
-        input_widget.focus()
+        finally:
+            thinking.hide()
+            if self._access.pending is None:
+                self._set_prompt_mode("input")
+            self._update_status()
+            input_widget.disabled = False
+            if input_widget.display:
+                input_widget.focus()
 
     async def _handle_command(self, command: str) -> None:
         output = self.query_one("#main-output", MainOutput)
@@ -608,8 +795,13 @@ class AgentHarnessApp(App):
         if cmd == "/help":
             output.system_msg(
                 "/model <name>      Switch model\n"
+                "/models            List known models and key readiness\n"
                 "/strategy <name>   Context strategy (truncate, summary, tiered)\n"
-                "/policy <name>     Access policy (unrestricted, readonly, no_shell)\n"
+                "/policy <name>     Access policy (plan, default, accept_edits, auto, dont_ask, readonly, no_shell)\n"
+                "/approve           Approve pending action once\n"
+                "/approve_session   Approve pending action for this session\n"
+                "/deny              Deny pending action\n"
+                "/deny_session      Deny pending action for this session\n"
                 "/budget <amount>   Set cost budget in USD\n"
                 "/skills            List skills\n"
                 "/metrics           Show session metrics\n"
@@ -623,16 +815,22 @@ class AgentHarnessApp(App):
             if not arg:
                 output.system_msg(f"Current: {self._model}")
             else:
+                available, required_env = is_model_available(arg)
+                if not available:
+                    output.error_msg(f"Model '{arg}' requires {required_env}")
+                    return
                 self._model = arg
-                self._cost_tracker = CostTracker(model=self._model, budget_usd=self._budget)
+                self._init_session()
                 output.system_msg(f"Model → {self._model}")
                 self._update_status()
+        elif cmd == "/models":
+            output.show_models(self._model)
         elif cmd == "/strategy":
             if not arg:
                 output.system_msg(f"Current: {self._strategy}")
             elif arg in ("truncate", "summary", "tiered"):
                 self._strategy = arg
-                self._context_mgr = ContextManager(strategy_name=arg, model=self._model)
+                self._init_session()
                 output.system_msg(f"Strategy → {arg}")
             else:
                 output.error_msg(f"Unknown: {arg}. Use truncate, summary, tiered")
@@ -643,9 +841,22 @@ class AgentHarnessApp(App):
                 try:
                     self._access = AccessController(policy=get_policy(arg))
                     self._policy_name = arg
+                    self._runner.access_controller = self._access
                     output.system_msg(f"Policy → {arg}")
                 except ValueError as e:
                     output.error_msg(str(e))
+        elif cmd in {"/approve", "/approve_session", "/deny", "/deny_session"}:
+            action_map = {
+                "/approve": "approve_once",
+                "/approve_session": "approve_session",
+                "/deny": "deny",
+                "/deny_session": "deny_session",
+            }
+            if self._access.pending is None:
+                output.error_msg("No pending approval")
+            else:
+                self.query_one("#approval-selector", ApprovalSelector).clear_request()
+                self._resume_after_approval(action_map[cmd])
         elif cmd == "/budget":
             if not arg:
                 if self._budget:
@@ -698,14 +909,14 @@ class AgentHarnessApp(App):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Agent Harness TUI")
+    parser = argparse.ArgumentParser(description="Relay TUI")
     parser.add_argument("--model", "-m", default=settings.default_model)
     parser.add_argument("--strategy", "-s", default=settings.context_strategy)
     parser.add_argument("--policy", "-p", default="unrestricted")
     parser.add_argument("--budget", type=float, default=None)
     args = parser.parse_args()
 
-    app = AgentHarnessApp(
+    app = RelayApp(
         model=args.model, strategy=args.strategy,
         policy=args.policy, budget=args.budget,
     )

@@ -13,6 +13,10 @@ from tools.base import BuiltinTool
 class ReadFileTool(BuiltinTool):
     name = "read_file"
     description = "Read the contents of a file. Returns the file content as text."
+    is_read_only = True
+    is_concurrency_safe = True
+    requires_confirmation = False
+    mutates_state = False
     parameters = [
         ToolParameter(name="path", type="string", description="Path to the file to read"),
         ToolParameter(
@@ -55,6 +59,7 @@ class ReadFileTool(BuiltinTool):
 class WriteFileTool(BuiltinTool):
     name = "write_file"
     description = "Write content to a file. Creates the file if it doesn't exist, overwrites if it does."
+    requires_confirmation = True
     parameters = [
         ToolParameter(name="path", type="string", description="Path to the file to write"),
         ToolParameter(name="content", type="string", description="Content to write to the file"),
@@ -73,6 +78,7 @@ class WriteFileTool(BuiltinTool):
 class EditFileTool(BuiltinTool):
     name = "edit_file"
     description = "Replace a specific string in a file with new content. The old_string must match exactly."
+    requires_confirmation = True
     parameters = [
         ToolParameter(name="path", type="string", description="Path to the file to edit"),
         ToolParameter(name="old_string", type="string", description="Exact string to find and replace"),
@@ -103,6 +109,10 @@ class EditFileTool(BuiltinTool):
 class ListDirTool(BuiltinTool):
     name = "list_dir"
     description = "List files and directories in a given path. Returns names with type indicators."
+    is_read_only = True
+    is_concurrency_safe = True
+    requires_confirmation = False
+    mutates_state = False
     parameters = [
         ToolParameter(
             name="path",

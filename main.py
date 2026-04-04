@@ -1,4 +1,4 @@
-"""Agent Harness — CLI entry point with interactive REPL.
+"""Relay — CLI entry point with interactive REPL.
 
 Usage:
     uv run python main.py                          # Interactive mode (like Claude Code)
@@ -11,10 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
-import time
-import uuid
-from typing import Any, Callable
+from typing import Any
 
 # Suppress noisy logs from libraries
 logging.basicConfig(level=logging.ERROR)
@@ -27,27 +24,16 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
-from agent.context.manager import ContextManager
-from agent.models import AgentEvent, EventType, TokenUsage
-from agent.prompts import build_system_prompt
-from agent.skill_loader import SkillLoader
-from agent.tool_dispatch import ToolDispatch
+from agent.models import TokenUsage
+from agent.shared_runner import SharedTurnRunner
+from agent.session_engine import SessionEngine
 from harness.access_control import AccessController, AccessPolicy, get_policy, PRESET_POLICIES
 from harness.cost_tracker import CostTracker
-from harness.runtime import RuntimeConfig, RuntimeGuard
-from harness.token_tracker import extract_usage
-from harness.trace import Trace
-from tools.base import get_all_builtin_tools
-from tools.skill_meta import SkillMetaTools
-from config import settings
+from harness.runtime import RuntimeConfig
+from config import is_model_available, list_known_models, settings
 
 console = Console()
-
-# Skills that modify the tool registry
-_SKILL_MUTATING_TOOLS = {"load_skill", "unload_skill"}
-
 
 class AgentSession:
     """Persistent agent session — maintains state across conversation turns."""
@@ -64,20 +50,10 @@ class AgentSession:
         self.context_strategy = context_strategy
         self.runtime_config = runtime_config
 
-        # Tool dispatch + skills
-        self.dispatch = ToolDispatch()
-        for tool in get_all_builtin_tools():
-            self.dispatch.register(tool.to_tool_def(), tool.execute)
-
-        self.skill_loader = SkillLoader(self.dispatch)
-        self.skill_loader.discover()
-
-        meta_tools = SkillMetaTools(self.skill_loader)
-        for tool_def, handler in meta_tools.get_tool_pairs():
-            self.dispatch.register(tool_def, handler)
-
-        # Context manager
-        self.context_mgr = ContextManager(strategy_name=context_strategy, model=model)
+        self.session_engine = SessionEngine(model=model, context_strategy=context_strategy)
+        self.dispatch = self.session_engine.dispatch
+        self.skill_loader = self.session_engine.skill_loader
+        self.context_mgr = self.session_engine.context_mgr
 
         # Harness: access control
         self.access_controller = AccessController(
@@ -86,177 +62,94 @@ class AgentSession:
 
         # Harness: cost tracker
         self.cost_tracker = CostTracker(model=model, budget_usd=cost_budget)
+        self.runner = SharedTurnRunner(
+            session_engine=self.session_engine,
+            access_controller=self.access_controller,
+            cost_tracker=self.cost_tracker,
+            model=self.model,
+            runtime_config=self.runtime_config,
+        )
 
-        # Conversation history (persists across turns)
-        system_prompt = build_system_prompt(self.skill_loader)
-        self.messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt},
-        ]
+        self.messages = self.session_engine.messages
 
         # Cumulative metrics
         self.total_usage = TokenUsage()
         self.turn_count = 0
 
+    def _approve_interactively(self) -> str:
+        """Prompt the user to approve, deny, or save a session rule."""
+        while True:
+            choice = console.input(
+                "[bold yellow]Approve?[/bold yellow] "
+                "[a]pprove once / approve [s]ession / [d]eny / deny ses[s]ion: "
+            ).strip().lower()
+            if choice in {"a", "approve", "approve_once"}:
+                return "approve_once"
+            if choice in {"session", "approve_session"}:
+                return "approve_session"
+            if choice in {"d", "deny"}:
+                return "deny"
+            if choice in {"ds", "deny_session"}:
+                return "deny_session"
+            console.print("[dim]Choose: a, session, d, or ds[/dim]")
+
     async def run_turn(self, user_input: str) -> str | None:
         """Process one user turn — may involve multiple LLM calls + tool calls."""
         self.turn_count += 1
+        assistant_content = ""
 
-        # Pre-load skills by intent before first LLM call
-        pre_loaded = self.skill_loader.pre_load_by_intent(user_input)
-        if pre_loaded:
-            new_prompt = build_system_prompt(self.skill_loader)
-            self.messages[0] = {"role": "system", "content": new_prompt}
-            for name in pre_loaded:
-                console.print(f"  [dim]Skill auto-loaded: {name}[/dim]")
+        async def consume(events: Any) -> bool:
+            nonlocal assistant_content
+            async for event in events:
+                data = event.data
+                if event.type == "skill_auto_loaded":
+                    continue
+                elif event.type == "llm_call_started":
+                    console.print(
+                        f"[dim]  LLM call (step {data['step']}, "
+                        f"{data['message_count']} msgs, "
+                        f"{data['tool_count']} tools)...[/dim]"
+                    )
+                elif event.type == "usage":
+                    usage = data["usage"]
+                    self.total_usage.prompt_tokens += usage.prompt_tokens
+                    self.total_usage.completion_tokens += usage.completion_tokens
+                    self.total_usage.total_tokens += usage.total_tokens
+                    self.total_usage.cost_usd += usage.cost_usd
+                    console.print(
+                        f"[dim]  Response in {data['duration_ms']:.0f}ms "
+                        f"(in:{usage.prompt_tokens} out:{usage.completion_tokens} "
+                        f"${usage.cost_usd:.4f})[/dim]"
+                    )
+                elif event.type == "assistant_note":
+                    if data["text"]:
+                        console.print(f"\n{data['text']}")
+                elif event.type == "tool_started":
+                    args_short = ", ".join(f"{k}={repr(v)[:40]}" for k, v in data["arguments"].items())
+                    console.print(f"  [yellow]● {data['name']}[/yellow]({args_short})")
+                elif event.type == "tool_denied":
+                    console.print(f"  [red]✗[/red] {data['reason']}")
+                elif event.type == "tool_finished":
+                    icon = "[green]✓[/green]" if data["success"] else "[red]✗[/red]"
+                    preview = data["content"][:100].replace("\n", " ")
+                    console.print(f"  {icon} ({data['duration_ms']:.0f}ms) {preview}")
+                elif event.type == "approval_requested":
+                    console.print(
+                        f"  [yellow]?[/yellow] approval needed for "
+                        f"[bold]{data['tool_name']}[/bold]: {data['reason']}"
+                    )
+                    resolution = self._approve_interactively()
+                    return await consume(self.runner.resume_pending(resolution))
+                elif event.type == "turn_finished":
+                    assistant_content = data["content"] or assistant_content
+                    return True
+                elif event.type == "error":
+                    console.print(f"\n[bold red]{data['message']}[/bold red]")
+                    return False
+            return True
 
-        self.messages.append({"role": "user", "content": user_input})
-
-        guard = RuntimeGuard(self.runtime_config)
-        step = 0
-        assistant_content = None
-
-        while True:
-            # Check limits
-            limit_error = guard.check()
-            if limit_error:
-                console.print(f"\n[bold red]Limit reached:[/bold red] {limit_error}")
-                break
-
-            # Context management
-            tools_schema = self.dispatch.to_openai_tools()
-            fitted_messages = await self.context_mgr.prepare(self.messages, tools_schema)
-
-            console.print(
-                f"[dim]  LLM call (step {step}, "
-                f"{len(fitted_messages)} msgs, "
-                f"{len(tools_schema)} tools)...[/dim]"
-            )
-
-            llm_start = time.time()
-
-            try:
-                response = await litellm.acompletion(
-                    model=self.model,
-                    messages=fitted_messages,
-                    tools=tools_schema if tools_schema else None,
-                )
-            except Exception as e:
-                console.print(f"\n[bold red]LLM Error:[/bold red] {e}")
-                break
-
-            llm_ms = (time.time() - llm_start) * 1000
-            usage = extract_usage(response)
-            self.total_usage.prompt_tokens += usage.prompt_tokens
-            self.total_usage.completion_tokens += usage.completion_tokens
-            self.total_usage.total_tokens += usage.total_tokens
-            self.total_usage.cost_usd += usage.cost_usd
-
-            # Cost tracking
-            self.cost_tracker.add_step(step, usage)
-            budget_error = self.cost_tracker.check_budget()
-            if budget_error:
-                console.print(f"\n[bold red]{budget_error}[/bold red]")
-                break
-
-            console.print(
-                f"[dim]  Response in {llm_ms:.0f}ms "
-                f"(in:{usage.prompt_tokens} out:{usage.completion_tokens} "
-                f"${usage.cost_usd:.4f})[/dim]"
-            )
-
-            choice = response.choices[0]
-            assistant_msg = choice.message
-
-            # Handle tool calls
-            if assistant_msg.tool_calls:
-                # Show what the assistant said (if anything) before tool calls
-                if assistant_msg.content:
-                    console.print(f"\n{assistant_msg.content}")
-
-                # Add assistant message with tool calls to history
-                assistant_dict: dict[str, Any] = {"role": "assistant"}
-                if assistant_msg.content:
-                    assistant_dict["content"] = assistant_msg.content
-                assistant_dict["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in assistant_msg.tool_calls
-                ]
-                self.messages.append(assistant_dict)
-
-                # Execute each tool call
-                raw_calls = [
-                    {
-                        "id": tc.id,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in assistant_msg.tool_calls
-                ]
-                parsed_calls = self.dispatch.parse_tool_calls(raw_calls)
-                skill_changed = False
-
-                for tool_call in parsed_calls:
-                    args_short = ", ".join(f"{k}={repr(v)[:40]}" for k, v in tool_call.arguments.items())
-                    console.print(f"  [yellow]● {tool_call.name}[/yellow]({args_short})")
-
-                    tool_start = time.time()
-
-                    # Access control check
-                    access_denied = self.access_controller.check(tool_call)
-                    if access_denied:
-                        result_content = f"Access denied: {access_denied}"
-                        result_success = False
-                    # Validate
-                    elif (validation_error := self.dispatch.validate_call(tool_call)):
-                        result_content = self.dispatch.retry_prompt(tool_call, validation_error)
-                        result_success = False
-                    else:
-                        result = await self.dispatch.execute(tool_call)
-                        result_content = result.content
-                        result_success = result.success
-
-                    tool_ms = (time.time() - tool_start) * 1000
-                    result_content = self.context_mgr.compact_tool_result(result_content)
-
-                    icon = "[green]✓[/green]" if result_success else "[red]✗[/red]"
-                    preview = result_content[:100].replace("\n", " ")
-                    console.print(f"  {icon} ({tool_ms:.0f}ms) {preview}")
-
-                    self.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": tool_call.name,
-                        "content": result_content,
-                    })
-
-                    if tool_call.name in _SKILL_MUTATING_TOOLS:
-                        skill_changed = True
-
-                # Rebuild system prompt if skills changed
-                if skill_changed:
-                    new_prompt = build_system_prompt(self.skill_loader)
-                    self.messages[0] = {"role": "system", "content": new_prompt}
-
-                guard.increment_step()
-                step += 1
-
-            else:
-                # No tool calls — agent is done with this turn
-                assistant_content = assistant_msg.content
-                if assistant_content:
-                    self.messages.append({"role": "assistant", "content": assistant_content})
-                break
-
-        return assistant_content
+        await consume(self.runner.start_turn(user_input))
+        return assistant_content or None
 
     def print_status(self) -> None:
         """Print session status bar."""
@@ -277,6 +170,42 @@ class AgentSession:
             f"{budget_str}{denied_str}[/dim]"
         )
 
+    def print_models(self) -> None:
+        """Print known models and whether their API keys are configured."""
+        table = Table(title="Models", border_style="blue")
+        table.add_column("Model", style="bold")
+        table.add_column("Status")
+        table.add_column("Requirement")
+        for model in list_known_models():
+            available, required_env = is_model_available(model)
+            status = "[green]ready[/green]" if available else "[yellow]missing key[/yellow]"
+            requirement = required_env or "-"
+            label = f"{model} [dim](current)[/dim]" if model == self.model else model
+            table.add_row(label, status, requirement)
+        console.print(table)
+
+    def switch_model(self, model: str) -> tuple[bool, str]:
+        """Switch to a new model if the required provider key is available."""
+        available, required_env = is_model_available(model)
+        if not available:
+            return False, f"Model '{model}' requires {required_env}."
+
+        self.model = model
+        self.session_engine = SessionEngine(model=model, context_strategy=self.context_strategy)
+        self.dispatch = self.session_engine.dispatch
+        self.skill_loader = self.session_engine.skill_loader
+        self.context_mgr = self.session_engine.context_mgr
+        self.cost_tracker = CostTracker(model=model, budget_usd=self.cost_tracker.budget_usd)
+        self.runner = SharedTurnRunner(
+            session_engine=self.session_engine,
+            access_controller=self.access_controller,
+            cost_tracker=self.cost_tracker,
+            model=self.model,
+            runtime_config=self.runtime_config,
+        )
+        self.messages = self.session_engine.messages
+        return True, f"Model → {model}"
+
 
 async def interactive_mode(
     model: str,
@@ -289,10 +218,10 @@ async def interactive_mode(
     policy_name = "custom" if access_policy and access_policy.blocked_tools else "unrestricted"
     budget_str = f"${cost_budget:.2f}" if cost_budget else "unlimited"
     console.print(Panel(
-        f"[bold]Agent Harness[/bold] — Interactive Mode\n"
+        f"[bold]Relay[/bold] — Interactive Mode\n"
         f"Model: {model} | Strategy: {strategy}\n"
         f"Policy: {policy_name} | Budget: {budget_str}\n"
-        f"Commands: /status, /skills, /costs, /access, /quit",
+        f"Commands: /status, /skills, /models, /model <name>, /costs, /access, /quit",
         border_style="magenta",
     ))
 
@@ -321,6 +250,18 @@ async def interactive_mode(
             available = session.skill_loader.get_available_skill_names()
             console.print(f"Available: {', '.join(available)}")
             console.print(f"Loaded: {', '.join(loaded) if loaded else 'none'}")
+            continue
+        elif user_input.lower() == "/models":
+            session.print_models()
+            continue
+        elif user_input.lower().startswith("/model"):
+            _, _, arg = user_input.partition(" ")
+            arg = arg.strip()
+            if not arg:
+                console.print(f"Current: {session.model}")
+            else:
+                ok, message = session.switch_model(arg)
+                console.print(message if ok else f"[red]{message}[/red]")
             continue
         elif user_input.lower() == "/costs":
             summary = session.cost_tracker.summary()
@@ -365,7 +306,11 @@ async def single_shot_mode(
     cost_budget: float | None = None,
 ) -> None:
     """Single-shot mode — one prompt, one response."""
-    console.print(Panel(f"[bold]{prompt}[/bold]", title="[bold magenta]Agent Harness[/bold magenta]", border_style="magenta"))
+    available, required_env = is_model_available(model)
+    if not available:
+        console.print(f"[red]Model '{model}' requires {required_env}.[/red]")
+        return
+    console.print(Panel(f"[bold]{prompt}[/bold]", title="[bold magenta]Relay[/bold magenta]", border_style="magenta"))
 
     session = AgentSession(model, strategy, runtime, access_policy, cost_budget)
     output = await session.run_turn(prompt)
@@ -382,7 +327,7 @@ async def single_shot_mode(
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Agent Harness CLI")
+    parser = argparse.ArgumentParser(description="Relay CLI")
     parser.add_argument("prompt", nargs="?", default=None, help="User prompt (omit for interactive mode)")
     parser.add_argument("--model", "-m", default=settings.default_model, help="LiteLLM model ID")
     parser.add_argument("--strategy", "-s", default=settings.context_strategy, help="Context strategy")

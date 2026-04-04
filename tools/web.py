@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
 
-from agent.models import ToolParameter
+from agent.models import ToolGroup, ToolParameter
+from services.web_search import search_web
 from tools.base import BuiltinTool
 
 
 class WebSearchTool(BuiltinTool):
     name = "web_search"
     description = (
-        "Search the web for information. Returns search results with titles and snippets. "
-        "Note: This is a stub — replace with a real search API (SerpAPI, Brave, etc.) for production."
+        "Search the web for information. Returns search results with titles, URLs, and snippets."
     )
+    tool_group = ToolGroup.RUNTIME
+    is_read_only = True
+    is_concurrency_safe = True
+    requires_confirmation = True
+    is_networked = True
+    mutates_state = False
     parameters = [
         ToolParameter(name="query", type="string", description="Search query"),
         ToolParameter(
@@ -29,17 +36,31 @@ class WebSearchTool(BuiltinTool):
 
     async def execute(self, **kwargs: Any) -> str:
         query = kwargs["query"]
-        return (
-            f"Web search for: '{query}'\n\n"
-            "Note: web_search is currently a stub. To enable real search, "
-            "configure a search API (SerpAPI, Brave Search, etc.) in config.py.\n\n"
-            "For now, use web_fetch to read specific URLs directly."
-        )
+        num_results = int(kwargs.get("num_results", 5) or 5)
+        results = await search_web(query, max_results=max(1, min(num_results, 10)))
+        if not results:
+            return f"No web results found for: {query}"
+
+        lines = [f"Web search results for: {query}", ""]
+        for index, result in enumerate(results, start=1):
+            lines.append(f"{index}. {result['title']}")
+            lines.append(f"   URL: {result['url']}")
+            snippet = result.get("snippet", "").strip()
+            if snippet:
+                lines.append(f"   Snippet: {snippet}")
+            lines.append("")
+        return "\n".join(lines).strip()
 
 
 class WebFetchTool(BuiltinTool):
     name = "web_fetch"
     description = "Fetch the content of a web page and return it as text. Strips HTML tags for readability."
+    tool_group = ToolGroup.RUNTIME
+    is_read_only = True
+    is_concurrency_safe = True
+    requires_confirmation = True
+    is_networked = True
+    mutates_state = False
     parameters = [
         ToolParameter(name="url", type="string", description="URL to fetch"),
         ToolParameter(
@@ -57,7 +78,7 @@ class WebFetchTool(BuiltinTool):
 
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-                resp = await client.get(url, headers={"User-Agent": "AgentHarness/0.1"})
+                resp = await client.get(url, headers={"User-Agent": "Relay/0.1"})
                 resp.raise_for_status()
 
             content_type = resp.headers.get("content-type", "")

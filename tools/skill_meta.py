@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from agent.models import ToolDef, ToolParameter
+from agent.models import ToolDef, ToolGroup, ToolParameter
 
 if TYPE_CHECKING:
     from agent.skill_loader import SkillLoader
@@ -35,6 +35,11 @@ class SkillMetaTools:
                 "and reference sections. Use this to decide which skills to load."
             ),
             parameters=[],
+            is_read_only=True,
+            is_concurrency_safe=True,
+            requires_confirmation=False,
+            mutates_state=False,
+            tool_group=ToolGroup.RUNTIME,
         )
 
     @staticmethod
@@ -53,6 +58,8 @@ class SkillMetaTools:
                     description="Name of the skill pack to load (from list_skills output)",
                 ),
             ],
+            requires_confirmation=False,
+            tool_group=ToolGroup.RUNTIME,
         )
 
     @staticmethod
@@ -70,6 +77,8 @@ class SkillMetaTools:
                     description="Name of the skill pack to unload",
                 ),
             ],
+            requires_confirmation=False,
+            tool_group=ToolGroup.RUNTIME,
         )
 
     @staticmethod
@@ -93,6 +102,11 @@ class SkillMetaTools:
                     required=False,
                 ),
             ],
+            is_read_only=True,
+            is_concurrency_safe=True,
+            requires_confirmation=False,
+            mutates_state=False,
+            tool_group=ToolGroup.RUNTIME,
         )
 
     # -- Tool handlers ------------------------------------------------------

@@ -6,14 +6,17 @@
 - User wants technical indicators, charts, backtesting, or portfolio analysis
 
 ## Workflow
-1. **Fetch data** — Use `fetch_market_data` to get OHLCV data for the requested symbol
-2. **Compute indicators** — Use `compute_indicator` for RSI, MACD, Bollinger Bands, SMA/EMA
-3. **Analyze** — Look for patterns: oversold/overbought, crossovers, divergences, support/resistance
-4. **Visualize** — Use `generate_chart` to create candlestick charts with indicator overlays
-5. **Strategy** — If asked, use `run_backtest` to test a strategy on historical data
-6. **Report** — Summarize findings with specific numbers, dates, and actionable signals
+1. **Check prior work** — Use `rag_query` to search for past analyses, strategies, or notes on the symbol
+2. **Fetch data** — Use `fetch_market_data` to get OHLCV data for the requested symbol
+3. **Compute indicators** — Use `compute_indicator` for RSI, MACD, Bollinger Bands, SMA/EMA
+4. **Analyze** — Look for patterns: oversold/overbought, crossovers, divergences, support/resistance
+5. **Visualize** — Use `generate_chart` to create candlestick charts with indicator overlays
+6. **Strategy** — If asked, use `run_backtest` to test a strategy on historical data
+7. **Report** — Summarize findings with specific numbers, dates, and actionable signals
+8. **Index results** — Use `rag_index` to store generated reports/strategies for future reference
 
 ## Rules
+- ALWAYS check RAG for prior analyses on the same symbol before starting fresh work
 - ALWAYS use real data from tools — never make up prices or indicator values
 - Show your reasoning: "RSI is 34.2 which is below 35 oversold threshold"
 - When building strategies, ALWAYS backtest before recommending

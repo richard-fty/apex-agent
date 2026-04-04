@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from agent.models import ToolParameter
+from agent.models import ToolParameter, ToolGroup
 from tools.base import BuiltinTool
 
 # Commands that are blocked by default
@@ -67,3 +67,6 @@ class RunCommandTool(BuiltinTool):
             return f"Error: Command timed out after {timeout}s: {command}"
         except Exception as e:
             return f"Error running command: {e}"
+    tool_group = ToolGroup.RUNTIME
+    requires_confirmation = True
+    is_networked = True
