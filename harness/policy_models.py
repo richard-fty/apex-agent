@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from agent.models import PermissionMode
+from agent.core.models import PermissionMode
 
 
 @dataclass

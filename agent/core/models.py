@@ -109,6 +109,8 @@ class ToolDef(BaseModel):
     loading_strategy: ToolLoadingStrategy = ToolLoadingStrategy.ALWAYS
     feature_flag: str | None = None
     visible: bool = True
+    shell_command_arg: str | None = None
+    path_access: str | None = None
 
     def to_openai_schema(self) -> dict[str, Any]:
         """Convert to OpenAI function-calling schema."""
@@ -193,6 +195,7 @@ class AgentState(str, Enum):
     IDLE = "idle"
     RUNNING = "running"
     PAUSED = "paused"
+    WAITING_APPROVAL = "waiting_approval"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

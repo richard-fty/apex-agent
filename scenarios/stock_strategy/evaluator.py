@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.models import EventType
+from agent.core.models import EventType
 from harness.trace import Trace
 
 

@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agent.models import AgentEvent, EventType, TokenUsage
+from agent.core.models import AgentEvent, EventType, TokenUsage
 
 
 class TraceStep(BaseModel):
@@ -44,6 +44,10 @@ class Trace(BaseModel):
     final_output: str | None = None
     success: bool = True
     error: str | None = None
+    stop_reason: str | None = None
+    approval_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval_injections: list[dict[str, Any]] = Field(default_factory=list)
+    recovery_events: list[dict[str, Any]] = Field(default_factory=list)
 
     def add_event(self, event: AgentEvent) -> None:
         """Add an event to the trace."""
@@ -62,6 +66,62 @@ class Trace(BaseModel):
         self.total_usage.total_tokens += usage.total_tokens
         self.total_usage.cost_usd += usage.cost_usd
 
+    def record_approval_decision(
+        self,
+        *,
+        step: int,
+        tool_name: str,
+        action: str,
+        reason: str,
+        rule_source: str | None = None,
+        resolved_by: str | None = None,
+    ) -> None:
+        self.approval_decisions.append({
+            "step": step,
+            "tool_name": tool_name,
+            "action": action,
+            "reason": reason,
+            "rule_source": rule_source,
+            "resolved_by": resolved_by,
+            "timestamp": time.time(),
+        })
+
+    def record_retrieval_injection(
+        self,
+        *,
+        step: int,
+        route: str,
+        used: bool,
+        item_count: int,
+        used_local: bool = False,
+        used_web: bool = False,
+    ) -> None:
+        self.retrieval_injections.append({
+            "step": step,
+            "route": route,
+            "used": used,
+            "item_count": item_count,
+            "used_local": used_local,
+            "used_web": used_web,
+            "timestamp": time.time(),
+        })
+
+    def record_recovery_event(
+        self,
+        *,
+        step: int,
+        kind: str,
+        tool_name: str,
+        detail: str,
+    ) -> None:
+        self.recovery_events.append({
+            "step": step,
+            "kind": kind,
+            "tool_name": tool_name,
+            "detail": detail,
+            "timestamp": time.time(),
+        })
+
     @property
     def duration_seconds(self) -> float:
         end = self.end_time or time.time()
@@ -74,10 +134,17 @@ class Trace(BaseModel):
             1 for s in self.steps if s.event_type == EventType.TOOL_CALL_END
         )
 
-    def finish(self, output: str | None = None, error: str | None = None) -> None:
+    def finish(
+        self,
+        output: str | None = None,
+        error: str | None = None,
+        stop_reason: str | None = None,
+    ) -> None:
         """Mark the trace as complete."""
         self.end_time = time.time()
         self.final_output = output
+        if stop_reason:
+            self.stop_reason = stop_reason
         if error:
             self.success = False
             self.error = error

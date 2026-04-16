@@ -23,8 +23,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agent.skill_analyzer import AnalyzedSkill, SkillAnalyzer
-from agent.tool_dispatch import ToolDispatch
+from agent.skills.analyzer import AnalyzedSkill, SkillAnalyzer
+from agent.runtime.tool_dispatch import ToolDispatch
 from skills.base import SkillPack
 from skills.registry import discover_skills
 

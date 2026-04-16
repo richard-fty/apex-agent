@@ -9,7 +9,7 @@ import json
 import traceback
 from typing import Any, Callable, Awaitable
 
-from agent.models import ToolCall, ToolDef, ToolGroup, ToolLoadingStrategy, ToolResult
+from agent.core.models import ToolCall, ToolDef, ToolGroup, ToolLoadingStrategy, ToolResult
 
 
 # Type for tool handler functions

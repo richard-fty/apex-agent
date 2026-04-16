@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from agent.context.manager import ContextManager
-from agent.context_assembler import ContextAssembler, PreparedContext
-from agent.prompts import build_system_prompt
-from agent.skill_loader import SkillLoader
-from agent.tool_dispatch import ToolDispatch
+from agent.context.assembler import ContextAssembler, PreparedContext
+from agent.core.prompts import build_system_prompt
+from agent.skills.loader import SkillLoader
+from agent.runtime.tool_dispatch import ToolDispatch
 from config import settings
 from services.retrieval_policy import RetrievalContext, RetrievalPolicy
 from tools.base import get_all_builtin_tools

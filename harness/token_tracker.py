@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.models import TokenUsage
+from agent.core.models import TokenUsage
 
 
 def extract_usage(litellm_response: Any) -> TokenUsage:

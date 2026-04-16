@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 logging.basicConfig(level=logging.ERROR)
@@ -29,28 +27,30 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from agent.loop import run_agent
+from agent.runtime.loop import run_agent
 from harness.runtime import RuntimeConfig
 from harness.comparator import compare_results
 from harness.report import generate_report
-from scenarios.stock_strategy.evaluator import evaluate
+from scenarios.registry import get_scenario, list_scenarios
 from config import settings
 
 console = Console()
 
 
-def load_test_cases(case_ids: list[str] | None = None) -> list[dict[str, Any]]:
-    """Load test cases from JSON file."""
-    path = Path("scenarios/stock_strategy/test_cases.json")
-    cases = json.loads(path.read_text())
-
+def load_test_cases(
+    scenario_name: str,
+    case_ids: list[str] | None = None,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Load test cases from a named scenario."""
+    scenario = get_scenario(scenario_name)
+    cases = scenario.get_test_cases()
     if case_ids:
-        cases = [c for c in cases if c["id"] in case_ids]
-
-    return cases
+        cases = [c for c in cases if c.get("id") in case_ids]
+    return scenario, cases
 
 
 async def run_single(
+    scenario: Any,
     model: str,
     test_case: dict[str, Any],
     strategy: str,
@@ -70,9 +70,10 @@ async def run_single(
     )
 
     # Evaluate
-    score = evaluate(trace, test_case)
+    score = scenario.evaluate(trace, test_case)
     score["model"] = model
     score["context_strategy"] = strategy
+    score["scenario"] = scenario.name
 
     # Save trace
     trace.save("results")
@@ -81,6 +82,7 @@ async def run_single(
 
 
 async def run_benchmark(
+    scenario: Any,
     models: list[str],
     test_cases: list[dict[str, Any]],
     strategies: list[str],
@@ -92,6 +94,7 @@ async def run_benchmark(
 
     console.print(Panel(
         f"Models: {', '.join(models)}\n"
+        f"Scenario: {scenario.name}\n"
         f"Test cases: {len(test_cases)}\n"
         f"Strategies: {', '.join(strategies)}\n"
         f"Total runs: {total}",
@@ -113,7 +116,7 @@ async def run_benchmark(
 
                 start = time.time()
                 try:
-                    score = await run_single(model, case, strategy, timeout)
+                    score = await run_single(scenario, model, case, strategy, timeout)
                     elapsed = time.time() - start
 
                     # Print quick result
@@ -174,6 +177,10 @@ def print_results_table(results: list[dict[str, Any]]) -> None:
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Agent Benchmark Runner")
     parser.add_argument(
+        "--scenario", default="stock_strategy",
+        help=f"Scenario name: {', '.join(list_scenarios())}",
+    )
+    parser.add_argument(
         "--models", default=settings.default_model,
         help="Comma-separated model IDs (e.g. deepseek/deepseek-chat,gpt-4o)",
     )
@@ -198,14 +205,14 @@ async def main() -> None:
     models = [m.strip() for m in args.models.split(",")]
     strategies = [s.strip() for s in args.strategies.split(",")]
     case_ids = [c.strip() for c in args.cases.split(",")] if args.cases else None
-    test_cases = load_test_cases(case_ids)
+    scenario, test_cases = load_test_cases(args.scenario, case_ids)
 
     if not test_cases:
         console.print("[bold red]No test cases found.[/bold red]")
         return
 
     # Run benchmark
-    results = await run_benchmark(models, test_cases, strategies, args.timeout)
+    results = await run_benchmark(scenario, models, test_cases, strategies, args.timeout)
 
     # Print results table
     console.print()

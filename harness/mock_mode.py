@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Awaitable
 
-from agent.models import ToolDef
-from agent.tool_dispatch import ToolDispatch
+from agent.core.models import ToolDef
+from agent.runtime.tool_dispatch import ToolDispatch
 
 
 # Type for mock handlers

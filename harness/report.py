@@ -127,10 +127,9 @@ def generate_report(results: list[dict[str, Any]], output_dir: str = "results") 
 
             scores = r.get("scores", {})
             if scores:
-                lines.append(f"- Tool accuracy: {scores.get('tool_accuracy', 0):.3f}")
-                lines.append(f"- Content accuracy: {scores.get('content_accuracy', 0):.3f}")
-                lines.append(f"- Completion: {scores.get('completion', 0):.3f}")
-                lines.append(f"- Efficiency: {scores.get('efficiency', 0):.3f}")
+                for key, value in scores.items():
+                    label = key.replace("_", " ").title()
+                    lines.append(f"- {label}: {value:.3f}")
 
             details = r.get("details", {})
             if details.get("tools_missing"):

@@ -1,4 +1,4 @@
-"""Relay — CLI entry point with interactive REPL.
+"""Apex Agent — CLI entry point with interactive REPL.
 
 Usage:
     uv run python main.py                          # Interactive mode (like Claude Code)
@@ -25,9 +25,9 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.models import TokenUsage
-from agent.shared_runner import SharedTurnRunner
-from agent.session_engine import SessionEngine
+from agent.core.models import TokenUsage
+from agent.runtime.shared_runner import SharedTurnRunner
+from agent.session.engine import SessionEngine
 from harness.access_control import AccessController, AccessPolicy, get_policy, PRESET_POLICIES
 from harness.cost_tracker import CostTracker
 from harness.runtime import RuntimeConfig
@@ -218,7 +218,7 @@ async def interactive_mode(
     policy_name = "custom" if access_policy and access_policy.blocked_tools else "unrestricted"
     budget_str = f"${cost_budget:.2f}" if cost_budget else "unlimited"
     console.print(Panel(
-        f"[bold]Relay[/bold] — Interactive Mode\n"
+        f"[bold]Apex Agent[/bold] — Interactive Mode\n"
         f"Model: {model} | Strategy: {strategy}\n"
         f"Policy: {policy_name} | Budget: {budget_str}\n"
         f"Commands: /status, /skills, /models, /model <name>, /costs, /access, /quit",
@@ -310,7 +310,7 @@ async def single_shot_mode(
     if not available:
         console.print(f"[red]Model '{model}' requires {required_env}.[/red]")
         return
-    console.print(Panel(f"[bold]{prompt}[/bold]", title="[bold magenta]Relay[/bold magenta]", border_style="magenta"))
+    console.print(Panel(f"[bold]{prompt}[/bold]", title="[bold magenta]Apex Agent[/bold magenta]", border_style="magenta"))
 
     session = AgentSession(model, strategy, runtime, access_policy, cost_budget)
     output = await session.run_turn(prompt)
@@ -327,7 +327,7 @@ async def single_shot_mode(
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Relay CLI")
+    parser = argparse.ArgumentParser(description="Apex Agent CLI")
     parser.add_argument("prompt", nargs="?", default=None, help="User prompt (omit for interactive mode)")
     parser.add_argument("--model", "-m", default=settings.default_model, help="LiteLLM model ID")
     parser.add_argument("--strategy", "-s", default=settings.context_strategy, help="Context strategy")

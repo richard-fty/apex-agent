@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from agent.models import ToolGroup, ToolParameter
+from agent.core.models import ToolGroup, ToolParameter
 from services.web_search import search_web
 from tools.base import BuiltinTool
 
@@ -78,7 +78,7 @@ class WebFetchTool(BuiltinTool):
 
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-                resp = await client.get(url, headers={"User-Agent": "Relay/0.1"})
+                resp = await client.get(url, headers={"User-Agent": "ApexAgent/0.1"})
                 resp.raise_for_status()
 
             content_type = resp.headers.get("content-type", "")

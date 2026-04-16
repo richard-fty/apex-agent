@@ -10,10 +10,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.skill_loader import SkillLoader
+    from agent.skills.loader import SkillLoader
 
 BASE_SYSTEM_PROMPT = """\
-You are Relay, a personal terminal agent for research, files, shell, and the web.
+You are Apex Agent, a personal terminal agent for research, files, shell, and the web.
 
 ## Built-in Tools (always available)
 - `read_file(path)` — Read file contents

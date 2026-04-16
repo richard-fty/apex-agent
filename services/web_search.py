@@ -32,7 +32,7 @@ async def _search_tavily(query: str, *, max_results: int = 5) -> list[dict[str, 
                     "include_answer": False,
                     "include_raw_content": False,
                 },
-                headers={"Content-Type": "application/json", "User-Agent": "Relay/0.1"},
+                headers={"Content-Type": "application/json", "User-Agent": "ApexAgent/0.1"},
             )
             resp.raise_for_status()
     except Exception:
@@ -54,7 +54,7 @@ async def _search_duckduckgo(query: str, *, max_results: int = 5) -> list[dict[s
     url = f"https://duckduckgo.com/html/?q={quote(query)}"
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers={"User-Agent": "Relay/0.1"})
+            resp = await client.get(url, headers={"User-Agent": "ApexAgent/0.1"})
             resp.raise_for_status()
     except Exception:
         return []

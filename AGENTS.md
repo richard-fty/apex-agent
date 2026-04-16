@@ -15,7 +15,7 @@ This repository is primarily worked on in Chinese.
 - Prefer concrete implementation over long planning when the task is clear.
 - When proposing refactors, anchor them to the current codebase and file structure.
 
-## Relay Preferences
+## Apex Agent Preferences
 
 - Treat tools as capability boundaries.
 - Prefer conservative behavior for state-changing or networked actions.

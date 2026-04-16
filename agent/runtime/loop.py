@@ -28,9 +28,9 @@ from __future__ import annotations
 import uuid
 from typing import Callable
 
-from agent.models import AgentEvent, EventType
-from agent.session_engine import SessionEngine
-from agent.turn_executor import TurnExecutor
+from agent.runtime.orchestrator import SessionOrchestrator
+from agent.core.models import AgentEvent, EventType
+from agent.session.engine import SessionEngine
 from harness.runtime import RuntimeConfig, RuntimeGuard
 from harness.trace import Trace
 
@@ -68,8 +68,6 @@ async def run_agent(
     )
 
     session = SessionEngine(model=model, context_strategy=context_strategy)
-    session.pre_load_for_input(user_input)
-    session.add_user_message(user_input)
 
     # Emit start event
     callback(AgentEvent(
@@ -83,8 +81,13 @@ async def run_agent(
     ))
 
     try:
-        executor = TurnExecutor(session, callback)
-        await executor.execute(user_input, guard, trace)
+        orchestrator = SessionOrchestrator()
+        handle = orchestrator.create_runtime(
+            session_engine=session,
+            model=model,
+            runtime_config=config,
+        )
+        await handle.runtime.run_to_completion(user_input=user_input, trace=trace, callback=callback)
     except Exception as e:
         trace.finish(error=str(e))
         callback(AgentEvent(

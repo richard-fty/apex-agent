@@ -130,6 +130,7 @@ class Settings(BaseSettings):
     charts_dir: str = Field(default="charts")
     strategies_dir: str = Field(default="strategies")
     results_dir: str = Field(default="results")
+    session_store_dir: str = Field(default="results/sessions")
 
 
 settings = Settings()

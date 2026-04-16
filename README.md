@@ -1,4 +1,4 @@
-# Agent Harness
+# Apex Agent
 
 A general-purpose autonomous agent platform with tool execution, skill system, benchmark harness, and terminal UI.
 
@@ -46,7 +46,7 @@ uv run python -m harness
 ## Project Structure
 
 ```
-agent/              # Core agent loop, turn orchestration, context management
+agent/         # Core Apex Agent runtime, session, orchestration, context
 harness/            # Benchmark runner, metrics, cost tracking, report generation
 tools/              # Built-in tools: filesystem, shell, web, RAG wrapper
 skills/             # Pluggable domain skills (e.g., stock_strategy)

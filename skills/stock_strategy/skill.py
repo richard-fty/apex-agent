@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.models import ToolDef, ToolGroup, ToolParameter
+from agent.core.models import ToolDef, ToolGroup, ToolParameter
 from skills.base import SkillPack, ToolHandler
 from skills.stock_strategy.tools import (
     fetch_market_data,

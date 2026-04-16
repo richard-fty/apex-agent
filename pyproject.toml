@@ -1,7 +1,7 @@
 [project]
-name = "agent-harness"
+name = "apex-agent"
 version = "0.1.0"
-description = "General-purpose autonomous agent platform with benchmark harness"
+description = "Apex Agent managed runtime and benchmark platform"
 requires-python = ">=3.11"
 dependencies = [
     # LLM

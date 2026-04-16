@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.models import ToolGroup, ToolLoadingStrategy, ToolParameter
+from agent.core.models import ToolGroup, ToolLoadingStrategy, ToolParameter
 from rag_service.retrieval import (
     DEFAULT_COLLECTION,
     DEFAULT_RETRIEVAL_MODE,
@@ -31,6 +31,7 @@ class RagIndexTool(BuiltinTool):
     requires_confirmation = True
     is_networked = True
     mutates_state = True
+    path_access = "write"
     parameters = [
         ToolParameter(
             name="path",

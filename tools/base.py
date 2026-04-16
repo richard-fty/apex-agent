@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from agent.models import ToolDef, ToolGroup, ToolLoadingStrategy, ToolParameter
+from agent.core.models import ToolDef, ToolGroup, ToolLoadingStrategy, ToolParameter
 from config import settings
 
 # Global registry of built-in tool classes
@@ -27,6 +27,8 @@ class BuiltinTool(ABC):
     tool_group: ToolGroup = ToolGroup.CORE
     loading_strategy: ToolLoadingStrategy = ToolLoadingStrategy.ALWAYS
     feature_flag: str | None = None
+    shell_command_arg: str | None = None
+    path_access: str | None = None
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> str:
@@ -48,6 +50,8 @@ class BuiltinTool(ABC):
             loading_strategy=self.loading_strategy,
             feature_flag=self.feature_flag,
             visible=self.loading_strategy != ToolLoadingStrategy.RUNTIME_INJECTED,
+            shell_command_arg=self.shell_command_arg,
+            path_access=self.path_access,
         )
 
     def __init_subclass__(cls, **kwargs: Any) -> None:

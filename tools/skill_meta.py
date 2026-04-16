@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from agent.models import ToolDef, ToolGroup, ToolParameter
+from agent.core.models import ToolDef, ToolGroup, ToolParameter
 
 if TYPE_CHECKING:
-    from agent.skill_loader import SkillLoader
+    from agent.skills.loader import SkillLoader
 
 
 class SkillMetaTools:
@@ -59,6 +59,7 @@ class SkillMetaTools:
                 ),
             ],
             requires_confirmation=False,
+            mutates_state=False,
             tool_group=ToolGroup.RUNTIME,
         )
 
@@ -78,6 +79,7 @@ class SkillMetaTools:
                 ),
             ],
             requires_confirmation=False,
+            mutates_state=False,
             tool_group=ToolGroup.RUNTIME,
         )
 

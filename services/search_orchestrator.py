@@ -95,7 +95,7 @@ class SearchOrchestrator:
     async def _fetch_page(self, url: str, max_chars: int = 1800) -> str | None:
         try:
             async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                resp = await client.get(url, headers={"User-Agent": "Relay/0.1"})
+                resp = await client.get(url, headers={"User-Agent": "ApexAgent/0.1"})
                 resp.raise_for_status()
         except Exception:
             return None

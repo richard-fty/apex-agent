@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-from agent.models import ToolDef
+from agent.core.models import ToolDef
 
 
 ToolHandler = Callable[..., Awaitable[str] | str]

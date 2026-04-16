@@ -1,0 +1,20 @@
+Project scratchpad — phase one weekly notes (intentionally verbose to exercise context compression).
+
+Week 1: Kickoff. Team aligned on the managed-agent architecture. Early discussion about brain, harness, hands, and orchestration layers. A lot of back-and-forth about naming conventions.
+Week 2: Tooling survey. Reviewed several OSS agent loops. Concluded that a thin harness plus structured tool metadata beats heavyweight frameworks. Took notes on policy patterns.
+Week 3: Sandbox design. Looked at container-based, VM-based, and in-process sandboxes. Chose a pluggable interface so we can swap later without rewriting tool code.
+Week 4: Session store prototype. Tried in-memory first, then JSON on disk. Decided JSON on disk is enough for v0 since durability is needed but scale is small.
+Week 5: Approval workflow. Debated three designs: per-turn approval, session rules, and tiered trust. Landed on a hybrid with session-scoped approval rules plus per-call `ask`.
+Week 6: Retrieval policy. Decided retrieval must be a runtime capability, not a prompt dump. The policy evaluates the user input before the LLM call and injects a compact system message.
+Week 7: Context compression. Implemented truncate, summary, and tiered strategies. Benchmarks showed summary wins on goal retention but costs more tokens per turn.
+Week 8: Trace design. Agreed that traces must capture tokens, cost, tool calls, approval decisions, retrieval usage, stop reason, and duration to support strong evals.
+Week 9: Eval suite. Drafted twelve baseline cases covering direct answer, tool chains, malformed repair, tool-failure recovery, compression retention, retrieval relevance, approval, denial, step cap, timeout, and cancellation.
+Week 10: Policy review. Removed hardcoded tool-name special cases in favor of tool metadata (path access, shell command argument). Makes adding new risky tools easier.
+Week 11: Lifecycle states. Added an explicit waiting_approval state distinct from generic paused, so traces can tell apart approval pauses from other pauses.
+Week 12: Production hardening. Added failure injection tests covering malformed JSON, missing files, and transient tool errors. Confirmed the recovery path surfaces in the trace.
+
+Reminder filler paragraph 1. This file intentionally contains a long tail of irrelevant-but-plausible text so that naive context strategies will be forced to either summarize or truncate before answering a later goal. The goal is unrelated to the content of this file. The goal is to retrieve the project codename from mission.txt.
+
+Reminder filler paragraph 2. If the assistant loses track of the original goal after reading this file, the compression strategy has failed. The goal, stated again: retrieve the codename from mission.txt and report it. Do not be distracted by the week notes above.
+
+Reminder filler paragraph 3. A resilient agent will acknowledge this long note, then call read_file on tests/fixtures/core_agent/mission.txt and report the codename. Other content in this file is noise.

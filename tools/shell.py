@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from agent.models import ToolParameter, ToolGroup
+from agent.runtime.sandbox import get_default_sandbox
+from agent.core.models import ToolParameter, ToolGroup
 from tools.base import BuiltinTool
 
 # Commands that are blocked by default
@@ -41,28 +42,18 @@ class RunCommandTool(BuiltinTool):
                 return f"Error: Command blocked for safety: {command}"
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            result = await get_default_sandbox().run_command(command, timeout)
+            if result.timed_out:
+                return f"Error: Command timed out after {timeout}s: {command}"
 
             output_parts = []
-            if stdout:
-                output_parts.append(stdout.decode("utf-8", errors="replace"))
-            if stderr:
-                output_parts.append(f"[stderr]\n{stderr.decode('utf-8', errors='replace')}")
+            if result.stdout:
+                output_parts.append(result.stdout)
+            if result.stderr:
+                output_parts.append(f"[stderr]\n{result.stderr}")
 
-            output = "\n".join(output_parts).strip()
-            if not output:
-                output = "(no output)"
-
-            exit_info = f"\n[exit code: {proc.returncode}]"
-            return output + exit_info
-
+            output = "\n".join(output_parts).strip() or "(no output)"
+            return output + f"\n[exit code: {result.exit_code}]"
         except asyncio.TimeoutError:
             return f"Error: Command timed out after {timeout}s: {command}"
         except Exception as e:
@@ -70,3 +61,4 @@ class RunCommandTool(BuiltinTool):
     tool_group = ToolGroup.RUNTIME
     requires_confirmation = True
     is_networked = True
+    shell_command_arg = "command"

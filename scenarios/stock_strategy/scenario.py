@@ -6,7 +6,7 @@ from typing import Any
 
 from harness.trace import Trace
 from scenarios.base import Scenario
-from agent.models import EventType
+from agent.core.models import EventType
 
 
 class StockStrategyScenario(Scenario):

@@ -1,4 +1,4 @@
-# Relay Design Checklist
+# Apex Agent Design Checklist
 
 Use this checklist when designing or reviewing new features for `relay`.
 

@@ -1,4 +1,4 @@
-"""Relay TUI — clean, minimal design inspired by Claude Code.
+"""Apex Agent TUI — clean, minimal design inspired by Claude Code.
 
 No color borders. No labels. Clean whitespace. Spinner above prompt while thinking.
 
@@ -31,9 +31,9 @@ from textual.widgets import Footer, Input, Static
 from textual.reactive import reactive
 from textual.timer import Timer
 
-from agent.models import TokenUsage
-from agent.shared_runner import RunnerEvent, SharedTurnRunner
-from agent.session_engine import SessionEngine
+from agent.core.models import TokenUsage
+from agent.runtime.shared_runner import RunnerEvent, SharedTurnRunner
+from agent.session.engine import SessionEngine
 from harness.access_control import AccessController, get_policy
 from harness.cost_tracker import CostTracker
 from harness.runtime import RuntimeConfig
@@ -396,10 +396,10 @@ class SlashCommandMenu(Static):
         return self._commands[self._selected][0]
 
 
-class RelayApp(App):
+class ApexAgentApp(App):
     """Clean, minimal TUI — inspired by Claude Code."""
 
-    TITLE = "Relay"
+    TITLE = "Apex Agent"
     CSS = """
     Screen {
         layout: vertical;
@@ -506,7 +506,7 @@ class RelayApp(App):
             ("/skills", "show loaded and available skills"),
             ("/metrics", "show session metrics"),
             ("/reset", "reset the session"),
-            ("/quit", "exit Relay"),
+            ("/quit", "exit Apex Agent"),
         ]
 
     def compose(self) -> ComposeResult:
@@ -515,7 +515,7 @@ class RelayApp(App):
             yield ThinkingIndicator(id="thinking")
             yield ApprovalSelector(id="approval-selector")
             yield SlashCommandMenu(id="slash-menu")
-            yield Input(placeholder="Ask Relay anything or type /help", id="prompt-input")
+            yield Input(placeholder="Ask Apex Agent anything or type /help", id="prompt-input")
             yield StatusBar(id="status-bar")
 
     def on_mount(self) -> None:
@@ -544,7 +544,7 @@ class RelayApp(App):
 
         output._append(Static(Text.from_markup(
             "\n"
-            "  [bold]Relay[/bold]\n"
+            "  [bold]Apex Agent[/bold]\n"
             "\n"
             "  A personal terminal agent for research, files, shell, and the web.\n"
             "\n"
@@ -564,7 +564,7 @@ class RelayApp(App):
             self._cost_tracker.total_cost_usd,
             self._total_usage.total_tokens,
             self._skill_loader.get_loaded_skill_names(),
-            "Relay",
+            "Apex Agent",
         )
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -909,14 +909,14 @@ class RelayApp(App):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Relay TUI")
+    parser = argparse.ArgumentParser(description="Apex Agent TUI")
     parser.add_argument("--model", "-m", default=settings.default_model)
     parser.add_argument("--strategy", "-s", default=settings.context_strategy)
     parser.add_argument("--policy", "-p", default="unrestricted")
     parser.add_argument("--budget", type=float, default=None)
     args = parser.parse_args()
 
-    app = RelayApp(
+    app = ApexAgentApp(
         model=args.model, strategy=args.strategy,
         policy=args.policy, budget=args.budget,
     )

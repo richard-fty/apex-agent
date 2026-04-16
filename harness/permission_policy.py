@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.models import (
+from agent.core.models import (
     ApprovalRule,
     PermissionAction,
     PermissionDecision,
@@ -66,8 +66,8 @@ class PermissionPolicyEngine:
         tool_call: ToolCall,
         tool_def: ToolDef,
     ) -> PermissionDecision | None:
-        if tool_call.name == "run_command":
-            command = str(tool_call.arguments.get("command", "")).strip()
+        if tool_def.shell_command_arg:
+            command = str(tool_call.arguments.get(tool_def.shell_command_arg, "")).strip()
             for snippet in ("rm -rf", "mkfs", "shutdown", "reboot", "dd if="):
                 if snippet in command:
                     return self._deny(
@@ -77,7 +77,7 @@ class PermissionPolicyEngine:
                         "hard_guard.command",
                     )
 
-        if tool_call.name in {"write_file", "edit_file", "rag_index"}:
+        if tool_def.path_access == "write":
             path = str(tool_call.arguments.get("path", "")).strip()
             if path and not self._path_within_roots(path, policy.writable_roots):
                 return self._deny(
@@ -87,7 +87,7 @@ class PermissionPolicyEngine:
                     "hard_guard.writable_roots",
                 )
 
-        if tool_call.name == "read_file":
+        if tool_def.path_access == "read":
             path = str(tool_call.arguments.get("path", "")).strip()
             if path and not self._path_within_roots(path, policy.readable_roots):
                 return self._deny(
@@ -151,7 +151,7 @@ class PermissionPolicyEngine:
             return self._deny([], tool_call.name, "dont_ask converts approval requests into deny", "mode.dont_ask")
 
         if mode == PermissionMode.ACCEPT_EDITS:
-            if tool_call.name in {"write_file", "edit_file"} and self._path_within_roots(
+            if tool_def.path_access == "write" and self._path_within_roots(
                 str(tool_call.arguments.get("path", "")),
                 policy.writable_roots,
             ):
@@ -188,11 +188,11 @@ class PermissionPolicyEngine:
             return False
         if tool_def.is_read_only and not tool_def.is_networked:
             return True
-        if tool_call.name == "run_command":
-            command = str(tool_call.arguments.get("command", ""))
+        if tool_def.shell_command_arg:
+            command = str(tool_call.arguments.get(tool_def.shell_command_arg, ""))
             safe_prefixes = ("pwd", "ls", "rg ", "git status", "find ")
             return command.startswith(safe_prefixes)
-        if tool_call.name in {"list_skills", "read_skill_reference", "load_skill", "unload_skill"}:
+        if not tool_def.mutates_state and not tool_def.is_networked:
             return True
         return False
 

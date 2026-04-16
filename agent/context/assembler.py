@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent.context.manager import ContextManager
-from agent.tool_dispatch import ToolDispatch
+from agent.runtime.tool_dispatch import ToolDispatch
 from services.retrieval_policy import RetrievalContext, RetrievalPolicy
 
 
