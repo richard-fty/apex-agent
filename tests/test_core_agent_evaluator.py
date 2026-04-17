@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.core.models import AgentEvent, EventType
-from harness.trace import Trace
+from agent.runtime.trace import Trace
 from scenarios.core_agent.evaluator import evaluate
 
 

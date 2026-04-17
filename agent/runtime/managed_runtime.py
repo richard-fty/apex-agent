@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -18,14 +20,25 @@ from agent.core.models import (
     TokenUsage,
     ToolCall,
 )
+from agent.session.archive import SessionArchive
 from agent.session.store import SessionStore
 from config import settings
-from harness.runtime import RuntimeConfig, RuntimeGuard
-from harness.token_tracker import extract_usage
-from harness.trace import Trace
+from agent.runtime.guards import RuntimeConfig, RuntimeGuard
+from agent.runtime.token_tracker import extract_usage
+from agent.runtime.trace import Trace
 
+logger = logging.getLogger(__name__)
 
 _SKILL_MUTATING_TOOLS = {"load_skill", "unload_skill"}
+_PLAN_MUTATING_TOOLS = {"todo_write", "todo_update"}
+_MAX_LLM_RETRIES = 3
+_RETRYABLE_ERRORS = (
+    litellm.RateLimitError,
+    litellm.APIConnectionError,
+    litellm.Timeout,
+    ConnectionError,
+    TimeoutError,
+)
 
 
 @dataclass
@@ -100,6 +113,7 @@ class ManagedAgentRuntime:
         cost_tracker: Any | None = None,
         brain: LiteLLMBrain | None = None,
         session_store: SessionStore | None = None,
+        archive: SessionArchive | None = None,
     ) -> None:
         self.session_engine = session_engine
         self.model = model
@@ -108,6 +122,7 @@ class ManagedAgentRuntime:
         self.cost_tracker = cost_tracker
         self.brain = brain or LiteLLMBrain()
         self.session_store = session_store or SessionStore(settings.session_store_dir)
+        self.archive = archive
 
         self.session = SessionRecord()
         self._current_user_input: str | None = None
@@ -123,6 +138,12 @@ class ManagedAgentRuntime:
             model=self.model,
             context_strategy=self.session.metadata["context_strategy"],
         )
+        if self.archive is not None:
+            self.archive.create_session(
+                session_id=self.session.session_id,
+                model=self.model,
+                context_strategy=self.session.metadata["context_strategy"],
+            )
 
     async def start_turn(self, user_input: str) -> AsyncIterator[ManagedEvent]:
         self._current_user_input = user_input
@@ -307,15 +328,42 @@ class ManagedAgentRuntime:
             )
 
             llm_start = time.time()
-            try:
-                response = await self.brain.complete(
-                    model=self.model,
-                    messages=prepared.messages,
-                    tools=prepared.tool_schemas,
-                    stream=True,
-                )
-            except Exception as exc:
-                message = f"LLM: {exc}"
+            response = None
+            last_error: Exception | None = None
+            for attempt in range(_MAX_LLM_RETRIES):
+                try:
+                    response = await self.brain.complete(
+                        model=self.model,
+                        messages=prepared.messages,
+                        tools=prepared.tool_schemas,
+                        stream=True,
+                    )
+                    break
+                except _RETRYABLE_ERRORS as exc:
+                    last_error = exc
+                    if attempt < _MAX_LLM_RETRIES - 1:
+                        backoff = 2 ** attempt
+                        self.session.append_event(
+                            "api_retry",
+                            attempt=attempt + 1,
+                            error=str(exc),
+                            backoff_s=backoff,
+                        )
+                        self._persist_session()
+                        logger.warning("LLM retry %d/%d after %s (backoff %ds)",
+                                       attempt + 1, _MAX_LLM_RETRIES, type(exc).__name__, backoff)
+                        yield ManagedEvent("api_retry", {
+                            "attempt": attempt + 1,
+                            "backoff_s": backoff,
+                            "error": str(exc),
+                        })
+                        await asyncio.sleep(backoff)
+                except Exception as exc:
+                    last_error = exc
+                    break  # non-retryable error, fail immediately
+
+            if response is None:
+                message = f"LLM: {last_error}"
                 self.session.set_state(AgentState.FAILED, reason=message)
                 self._persist_session()
                 yield ManagedEvent("error", {"message": message})
@@ -390,6 +438,7 @@ class ManagedAgentRuntime:
 
                 parsed_calls = self.session_engine.dispatch.parse_tool_calls(tool_calls_raw)
                 skill_changed = False
+                plan_changed = False
 
                 for tool_call in parsed_calls:
                     async for event in self._handle_tool_call(tool_call):
@@ -399,12 +448,22 @@ class ManagedAgentRuntime:
 
                     if tool_call.name in _SKILL_MUTATING_TOOLS:
                         skill_changed = True
+                    if tool_call.name in _PLAN_MUTATING_TOOLS:
+                        plan_changed = True
 
                 if skill_changed:
                     self.session_engine.rebuild_system_prompt()
                     self.session.append_event("system_prompt_rebuilt")
                     self._persist_session()
                     yield ManagedEvent("skills_reloaded", {})
+
+                if plan_changed:
+                    pm = getattr(self.session_engine, "plan_manager", None)
+                    if pm is not None:
+                        event_type = "plan_created" if pm.create_count > 0 else "plan_task_updated"
+                        self.session.append_event(event_type, **pm.to_event_payload())
+                        self._persist_session()
+                        yield ManagedEvent("plan_updated", pm.to_event_payload())
 
                 self._guard.increment_step()
                 self._step += 1
@@ -675,3 +734,14 @@ class ManagedAgentRuntime:
             metadata=self.session.metadata,
             events=self.session.events,
         )
+        # Dual-write: also emit the latest event to the SQLite archive
+        if self.archive is not None and self.session.events:
+            latest = self.session.events[-1]
+            try:
+                self.archive.emit_event(
+                    self.session.session_id,
+                    latest["type"],
+                    latest.get("payload", {}),
+                )
+            except Exception:
+                logger.debug("Archive write failed (non-fatal)", exc_info=True)

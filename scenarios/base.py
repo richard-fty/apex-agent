@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from agent.core.models import ToolDef
-from harness.trace import Trace
+from agent.runtime.trace import Trace
 
 
 class TestCase(ABC):

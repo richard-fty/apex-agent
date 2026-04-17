@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 from agent.runtime.orchestrator import SessionOrchestrator
-from harness.runtime import RuntimeConfig
+from agent.runtime.guards import RuntimeConfig
 
 
 @dataclass

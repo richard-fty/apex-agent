@@ -7,7 +7,7 @@ from typing import Any
 
 from agent.runtime.managed_runtime import ManagedAgentRuntime
 from agent.session.store import SessionStore
-from harness.runtime import RuntimeConfig
+from agent.runtime.guards import RuntimeConfig
 
 
 @dataclass

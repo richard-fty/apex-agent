@@ -1,5 +1,5 @@
 """Allow running as: python -m harness.runner"""
-from harness.runner import main
+from eval.runner import main
 import asyncio
 
 asyncio.run(main())

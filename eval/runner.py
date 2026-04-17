@@ -28,9 +28,9 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from agent.runtime.loop import run_agent
-from harness.runtime import RuntimeConfig
-from harness.comparator import compare_results
-from harness.report import generate_report
+from agent.runtime.guards import RuntimeConfig
+from eval.comparator import compare_results
+from eval.report import generate_report
 from scenarios.registry import get_scenario, list_scenarios
 from config import settings
 

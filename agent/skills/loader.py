@@ -24,9 +24,10 @@ import logging
 from typing import Any
 
 from agent.skills.analyzer import AnalyzedSkill, SkillAnalyzer
+from agent.skills.intent import EmbedFn, IntentStrategy, choose_strategy
 from agent.runtime.tool_dispatch import ToolDispatch
-from skills.base import SkillPack
-from skills.registry import discover_skills
+from skill_packs.base import SkillPack
+from skill_packs.registry import discover_skills
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +35,31 @@ logger = logging.getLogger(__name__)
 class SkillLoader:
     """Manages progressive disclosure of skill packs with analysis."""
 
-    def __init__(self, tool_dispatch: ToolDispatch) -> None:
+    def __init__(
+        self,
+        tool_dispatch: ToolDispatch,
+        *,
+        embed_fn: EmbedFn | None = None,
+    ) -> None:
         self.tool_dispatch = tool_dispatch
         self.available: dict[str, SkillPack] = {}
         self.loaded: dict[str, SkillPack] = {}
         self.analyzed: dict[str, AnalyzedSkill] = {}
         self._analyzer = SkillAnalyzer()
+        self._embed_fn = embed_fn
+        self._intent_strategy: IntentStrategy | None = None
 
     def discover(self) -> None:
         """Scan for all available skill packs and analyze them."""
         self.available = discover_skills()
+        self._intent_strategy = choose_strategy(
+            list(self.available.values()), embed_fn=self._embed_fn
+        )
+        logger.debug(
+            "Intent strategy selected: %s (packs=%d)",
+            type(self._intent_strategy).__name__,
+            len(self.available),
+        )
 
         for name, skill in self.available.items():
             analyzed = self._analyzer.analyze(skill)
@@ -128,20 +144,24 @@ class SkillLoader:
     def pre_load_by_intent(self, user_input: str, threshold: float = 0.6) -> list[str]:
         """Pre-load skills that match the user's input before the first LLM call.
 
-        This saves one tool-call round-trip — the agent gets the skill's tools
-        and prompt immediately instead of having to call load_skill() first.
+        Strategy is chosen at `discover()` based on pack count:
+          - ≤10 packs → LLMNativeStrategy (no pre-load; model picks via
+            Level-1 index + `load_skill` meta-tool).
+          - 11–50 packs → HybridStrategy (BM25 + optional vector, RRF-fused).
 
-        Returns list of skill names that were pre-loaded.
+        Returns the names of packs that were pre-loaded this turn.
         """
-        pre_loaded = []
-        for name, skill in self.available.items():
-            if name in self.loaded:
+        if self._intent_strategy is None:
+            return []
+
+        candidates = self._intent_strategy.select(user_input, threshold=threshold)
+        pre_loaded: list[str] = []
+        for name in candidates:
+            if name in self.loaded or name not in self.available:
                 continue
-            score = skill.matches_intent(user_input)
-            if score >= threshold:
-                if self.load_skill(name):
-                    pre_loaded.append(name)
-                    logger.debug("Pre-loaded skill '%s' (score: %.2f)", name, score)
+            if self.load_skill(name):
+                pre_loaded.append(name)
+                logger.debug("Pre-loaded skill '%s' via %s", name, type(self._intent_strategy).__name__)
         return pre_loaded
 
     def get_loaded_skill_names(self) -> list[str]:

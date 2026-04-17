@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from scenarios.base import Scenario
 from scenarios.core_agent.scenario import CoreAgentScenario
+from scenarios.research_and_report.scenario import ResearchAndReportScenario
 from scenarios.stock_strategy.scenario import StockStrategyScenario
 
 
 def get_scenario(name: str) -> Scenario:
     scenarios: dict[str, Scenario] = {
         "core_agent": CoreAgentScenario(),
+        "research_and_report": ResearchAndReportScenario(),
         "stock_strategy": StockStrategyScenario(),
     }
     try:
@@ -19,4 +21,4 @@ def get_scenario(name: str) -> Scenario:
 
 
 def list_scenarios() -> list[str]:
-    return ["core_agent", "stock_strategy"]
+    return ["core_agent", "research_and_report", "stock_strategy"]

@@ -13,8 +13,8 @@ from agent.core.models import (
 )
 from agent.runtime.orchestrator import SessionOrchestrator
 from agent.session.store import SessionStore
-from harness.runtime import RuntimeConfig
-from harness.trace import Trace
+from agent.runtime.guards import RuntimeConfig
+from agent.runtime.trace import Trace
 
 
 class FakeStream:
@@ -389,7 +389,7 @@ def test_managed_runtime_records_retrieval_injection(tmp_path) -> None:
 
 
 def test_runtime_guard_surfaces_timeout_stop_reason() -> None:
-    from harness.runtime import RuntimeConfig as _RC, RuntimeGuard as _RG
+    from agent.runtime.guards import RuntimeConfig as _RC, RuntimeGuard as _RG
     import time as _time
 
     guard = _RG(_RC(max_steps=100, timeout_seconds=0))
@@ -400,7 +400,7 @@ def test_runtime_guard_surfaces_timeout_stop_reason() -> None:
 
 
 def test_runtime_guard_surfaces_step_limit_stop_reason() -> None:
-    from harness.runtime import RuntimeConfig as _RC, RuntimeGuard as _RG
+    from agent.runtime.guards import RuntimeConfig as _RC, RuntimeGuard as _RG
 
     guard = _RG(_RC(max_steps=1, timeout_seconds=30))
     guard.increment_step()
@@ -410,7 +410,7 @@ def test_runtime_guard_surfaces_step_limit_stop_reason() -> None:
 
 
 def test_runtime_guard_surfaces_cancellation_stop_reason() -> None:
-    from harness.runtime import RuntimeConfig as _RC, RuntimeGuard as _RG
+    from agent.runtime.guards import RuntimeConfig as _RC, RuntimeGuard as _RG
 
     guard = _RG(_RC(max_steps=10, timeout_seconds=30))
     guard.cancel()

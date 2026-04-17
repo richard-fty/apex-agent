@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from skills.base import SkillPack
+from skill_packs.base import SkillPack
 
 
 @dataclass

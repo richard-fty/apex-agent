@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from skills.base import SkillPack
+from skill_packs.base import SkillPack
 
 
 def discover_skills() -> dict[str, SkillPack]:
     """Scan for available skill packs and return them by name.
 
-    Each skill pack is a subpackage of skills/ with a skill.py module
+    Each skill pack is a subpackage of skill_packs/ with a skill.py module
     that exports a SkillPack subclass.
     """
     available: dict[str, SkillPack] = {}
@@ -16,7 +16,7 @@ def discover_skills() -> dict[str, SkillPack]:
     # Import known skill packs
     # Add new skill packs here as they are created
     try:
-        from skills.stock_strategy.skill import StockStrategySkill
+        from skill_packs.stock_strategy.skill import StockStrategySkill
         skill = StockStrategySkill()
         available[skill.name] = skill
     except ImportError:

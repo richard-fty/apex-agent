@@ -11,9 +11,9 @@ from agent.core.models import (
     ToolCall,
     ToolDef,
 )
-from harness.approval_manager import ApprovalManager
-from harness.permission_policy import PermissionPolicyEngine
-from harness.policy_models import AccessPolicy, PRESET_POLICIES, get_policy
+from agent.policy.approval_manager import ApprovalManager
+from agent.policy.permission_policy import PermissionPolicyEngine
+from agent.policy.policy_models import AccessPolicy, PRESET_POLICIES, get_policy
 
 
 @dataclass

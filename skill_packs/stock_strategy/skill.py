@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from agent.core.models import ToolDef, ToolGroup, ToolParameter
-from skills.base import SkillPack, ToolHandler
-from skills.stock_strategy.tools import (
+from skill_packs.base import SkillPack, ToolHandler
+from skill_packs.stock_strategy.tools import (
     fetch_market_data,
     compute_indicator,
     generate_chart,

@@ -28,9 +28,9 @@ from rich.table import Table
 from agent.core.models import TokenUsage
 from agent.runtime.shared_runner import SharedTurnRunner
 from agent.session.engine import SessionEngine
-from harness.access_control import AccessController, AccessPolicy, get_policy, PRESET_POLICIES
-from harness.cost_tracker import CostTracker
-from harness.runtime import RuntimeConfig
+from agent.policy.access_control import AccessController, AccessPolicy, get_policy, PRESET_POLICIES
+from agent.runtime.cost_tracker import CostTracker
+from agent.runtime.guards import RuntimeConfig
 from config import is_model_available, list_known_models, settings
 
 console = Console()

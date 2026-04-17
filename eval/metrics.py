@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent.core.models import EventType
-from harness.trace import Trace
+from agent.runtime.trace import Trace
 
 
 @dataclass

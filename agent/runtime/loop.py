@@ -31,8 +31,8 @@ from typing import Callable
 from agent.runtime.orchestrator import SessionOrchestrator
 from agent.core.models import AgentEvent, EventType
 from agent.session.engine import SessionEngine
-from harness.runtime import RuntimeConfig, RuntimeGuard
-from harness.trace import Trace
+from agent.runtime.guards import RuntimeConfig, RuntimeGuard
+from agent.runtime.trace import Trace
 
 
 EventCallback = Callable[[AgentEvent], None]

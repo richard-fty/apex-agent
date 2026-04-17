@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent.core.models import EventType
-from harness.trace import Trace
+from agent.runtime.trace import Trace
 
 
 def evaluate(trace: Trace, test_case: dict[str, Any]) -> dict[str, Any]:

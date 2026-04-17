@@ -12,7 +12,7 @@ from agent.core.models import (
     ToolCall,
     ToolDef,
 )
-from harness.policy_models import AccessPolicy
+from agent.policy.policy_models import AccessPolicy
 
 
 class PermissionPolicyEngine:

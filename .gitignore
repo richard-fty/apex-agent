@@ -6,6 +6,7 @@ results/
 charts/
 strategies/
 .claude/
+.codex/
 *.egg-info/
 rag_store/
 .tmp/
