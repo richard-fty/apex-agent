@@ -66,10 +66,9 @@ Required events (minimum):
 - `recovery_event` (malformed args, tool failure, unknown tool)
 
 In this repo:
-- `agent/session/engine.py` — turn-scoped session state
-- `agent/session/store.py` — JSON-file persistence (first durable implementation)
-
-Target: promote the store to an append-only event log with positional reads (`get_events(session_id, after=cursor)`).
+- `agent/session/engine.py` — turn-scoped session state and context assembly
+- `agent/session/archive.py` — append-only SQLite event log with positional reads (`get_events(session_id, after=cursor)`) — the durable source of truth
+- `agent/session/store.py` — deprecated JSON-file store; kept for compatibility only
 
 ### 2.2 Harness
 
@@ -89,8 +88,10 @@ Responsibilities per iteration:
 
 In this repo:
 - `agent/runtime/loop.py` — entry
-- `agent/runtime/managed_runtime.py` — the loop body (currently holds some run-scoped state; target: move that state into session)
-- `agent/runtime/tool_dispatch.py` — tool registry + routing
+- `agent/runtime/managed_runtime.py` — the loop body; run-scoped state is now persisted in the session archive
+- `agent/runtime/wake.py` — `wake(session_id)` implementation: boots a fresh harness from the event log
+- `agent/runtime/orchestrator.py` — `SessionOrchestrator`; owns `RuntimeGuard` creation so limits are external to the harness
+- `agent/runtime/tool_dispatch.py` — tool registry, routing, and universal `execute_by_name(name, input) -> str`
 - `agent/context/assembler.py` — context assembly
 - `eval/runner.py` — eval driver that wraps the harness for scenario runs
 
@@ -106,9 +107,12 @@ Requirements:
 - **credentials never live inside the sandbox**; auth is either bundled with a provisioned resource or fetched from an external vault (MCP proxy / secret manager)
 
 In this repo:
-- `agent/runtime/sandbox.py` — `BaseSandbox` + `LocalSandbox`. LocalSandbox is a stable seam, not yet strong isolation.
+- `agent/runtime/sandbox.py` — `BaseSandbox`, `LocalSandbox`, `DockerSandbox`
+- `DockerSandbox` provisions a per-session container with no host env forwarding
+- `LocalSandbox` is the fallback: scrubbed env + disposable HOME, but not a true container boundary
+- `create_session_sandbox(session_id)` auto-selects Docker when available; set `SANDBOX_REQUIRE_ISOLATION=true` to fail closed when Docker is absent
 
-Target: containerized or VM-backed sandbox with `provision({resources})` and `destroy()`, so sandboxes are per-session and disposable.
+**Isolation posture (default).** `sandbox_require_isolation=False` is the shipping default. A host without Docker falls back to `LocalSandbox` transparently — a deliberate trade-off for local dev ergonomics on laptops without Docker. For any deployment that handles untrusted inputs or sensitive credentials, set `SANDBOX_REQUIRE_ISOLATION=true` so `create_session_sandbox` refuses to run under the weaker `LocalSandbox` boundary. T1.5 covers both paths (local-scrub semantics, the Docker-argv credential-isolation contract, and the strict fail-closed path).
 
 ## 3. Interface Contracts
 
@@ -196,28 +200,31 @@ Release gate: no regression on safety or lifecycle cases; task success stable or
 
 | Concept | Status | Where |
 |---|---|---|
-| Session as durable log | **partial** — JSON record with events, rewritten on each step | `agent/session/store.py` |
-| Stateless harness + `wake` | **not shipped** — harness holds run-scoped state on the instance | `agent/runtime/managed_runtime.py` |
-| Sandbox boundary | **seam in place** — LocalSandbox; not yet isolated | `agent/runtime/sandbox.py` |
+| Session as durable log | **shipped** — `SessionArchive` is the append-only SQLite event log with positional reads. (The legacy JSON-file `SessionStore` has been removed.) | `agent/session/archive.py` |
+| Stateless harness + `wake` | **shipped** — run-scoped state is persisted in the archive; `wake(session_id)` boots a fresh harness from the event log alone | `agent/runtime/managed_runtime.py`, `agent/runtime/wake.py` |
+| Sandbox boundary | **shipped** — `DockerSandbox` (per-session container, no host env forwarding) with `LocalSandbox` fallback; `sandbox_require_isolation` fails closed when Docker is required but unavailable | `agent/runtime/sandbox.py` |
+| Universal hands (`execute(name, input) -> str`) | **shipped** — `ToolDispatch.execute_by_name(name, input)` is the stable str-return contract for native, MCP-backed, and resource-like tools | `agent/runtime/tool_dispatch.py` |
 | Brain adapter | **shipped** — LiteLLMBrain | `agent/runtime/managed_runtime.py` |
 | Tool dispatch + metadata | **shipped** | `agent/runtime/tool_dispatch.py`, `agent/core/models.py` |
 | Retrieval as service | **shipped** | `services/retrieval_policy.py` |
-| Approval model | **shipped** — allow/ask/deny with resumable pending | `agent/policy/access_control.py`, `agent/policy/approval_manager.py` |
-| Skill packs | **shipped** — discover + analyze + load | `skill_packs/`, `agent/skills/` |
-| TUI as event consumer | **shipped** | `tui/` |
-| Eval suite scenarios | **partial** — `core_agent` + `stock_strategy` scaffolded | `scenarios/` |
+| Approval model | **shipped** — allow/ask/deny with resumable pending; approval state persists across harness restarts via archive | `agent/policy/access_control.py`, `agent/policy/approval_manager.py` |
+| Skill packs | **shipped** — discover + analyze + load with intent-based pre-loading | `skill_packs/`, `agent/skills/` |
+| TUI as event consumer | **shipped** — TUI subscribes to the session event stream; no second runtime | `tui/` |
+| Eval suite scenarios | **shipped** — T1 hard gate + T3 regression suite + T2 multi-domain scenarios | `scenarios/`, `tests/test_t1_managed_agent_properties.py`, `tests/test_t3_apex_extensions.py` |
+| CI release gate | **shipped** — T1 + T3 + unit tests wired as required checks | `.github/workflows/ci.yml` |
+
+**Remaining gaps (see [gaps-review-2026-04-18.md](gaps-review-2026-04-18.md) for the most recent review; earlier tracking docs live in [archived/](archived/)):**
+
+- T1.5 still cannot run real Docker in CI; the Docker-argv inspection test is a static proof and the full integration test requires a Docker-enabled runner.
+- Benchmark-regression-gate in CI is opt-in (APEX_CI_RUN_BENCHMARK=1) and assumes API credentials are present — not enforced on every PR.
 
 ## 9. Roadmap
 
-In priority order:
+Remaining items in priority order:
 
-1. Promote `SessionStore` to an append-only event log with positional reads; stop rewriting the whole record per event.
-2. Move harness run-scoped state (`_step`, `_guard`, `_current_user_input`) into the session log so any harness instance can `wake(session_id)` cleanly.
-3. Land the 12 baseline eval cases from [eval-suite.md](eval-suite.md) under `scenarios/core_agent/`.
-4. Add failure-injection in the harness (malformed args, tool errors, context overflow) and recovery scoring.
-5. Ship a containerized sandbox implementation with `provision({resources})` and credential isolation.
-6. Add `execute(name, input) -> str` as the single hands interface; collapse per-layer special cases.
-7. Collapse `agent/runtime/{loop,managed_runtime,orchestrator,shared_runner}.py` into a single small harness loop (four files currently overlap — the article has one stateless harness).
+1. Add a runner-level hook for LT1 (mid-run kill + `wake()` continuation) and LT3 (cancel-at-70% + partial-artifact verification) so the `tier` field becomes enforced rather than descriptive.
+2. Wire a default benchmark baseline (`baselines/core_agent.json`) and enable `APEX_CI_RUN_BENCHMARK=1` once API credentials are provisioned in the CI environment.
+3. Collapse `agent/runtime/{loop,managed_runtime,orchestrator,shared_runner}.py` into a tighter set — the article's managed-agent has one stateless harness loop.
 
 ## 10. What Good Looks Like
 

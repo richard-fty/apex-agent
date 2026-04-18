@@ -1,0 +1,201 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── T1 hard gate ──────────────────────────────────────────────────────────
+  # All 9 T1 managed-agent property tests must pass. Any failure blocks merge.
+  t1-hard-gate:
+    name: T1 — Managed-Agent Properties (hard gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout apex-agent
+        uses: actions/checkout@v4
+        with:
+          path: apex-agent
+
+      - name: Checkout rag-service (sibling dep)
+        uses: actions/checkout@v4
+        with:
+          repository: richard-fty/rag-service
+          path: rag-service
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+        working-directory: apex-agent
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+        working-directory: apex-agent
+
+      - name: Run T1 hard gate
+        run: |
+          uv run pytest tests/test_t1_managed_agent_properties.py \
+            -v \
+            --tb=short \
+            -p no:warnings
+        working-directory: apex-agent
+
+  # ── T3 regression gate ───────────────────────────────────────────────────
+  # Apex extension tests must not regress. Failure blocks merge.
+  t3-regression-gate:
+    name: T3 — Apex Extensions (regression gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout apex-agent
+        uses: actions/checkout@v4
+        with:
+          path: apex-agent
+
+      - name: Checkout rag-service (sibling dep)
+        uses: actions/checkout@v4
+        with:
+          repository: richard-fty/rag-service
+          path: rag-service
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+        working-directory: apex-agent
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+        working-directory: apex-agent
+
+      - name: Run T3 regression suite
+        run: |
+          uv run pytest tests/test_t3_apex_extensions.py \
+            -v \
+            --tb=short \
+            -p no:warnings
+        working-directory: apex-agent
+
+  # ── Unit + integration tests ─────────────────────────────────────────────
+  unit-tests:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout apex-agent
+        uses: actions/checkout@v4
+        with:
+          path: apex-agent
+
+      - name: Checkout rag-service (sibling dep)
+        uses: actions/checkout@v4
+        with:
+          repository: richard-fty/rag-service
+          path: rag-service
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+        working-directory: apex-agent
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+        working-directory: apex-agent
+
+      - name: Run unit tests
+        run: |
+          uv run pytest tests/ \
+            --ignore=tests/test_t1_managed_agent_properties.py \
+            --ignore=tests/test_t3_apex_extensions.py \
+            --ignore=tests/test_rag_quality_benchmark.py \
+            --ignore=tests/test_squad_batch_benchmark.py \
+            -v \
+            --tb=short \
+            -p no:warnings
+        working-directory: apex-agent
+
+  # ── Benchmark regression gate ────────────────────────────────────────────
+  # Runs eval/runner.py against a committed baseline and fails on regression
+  # beyond the thresholds defined in eval/comparator.py.
+  # Skipped unless APEX_CI_RUN_BENCHMARK=1 is set as a repo variable, because
+  # scenarios call real LLM APIs and therefore need credentials + budget.
+  benchmark-regression-gate:
+    name: Benchmark Regression Gate
+    runs-on: ubuntu-latest
+    if: vars.APEX_CI_RUN_BENCHMARK == '1'
+    steps:
+      - name: Checkout apex-agent
+        uses: actions/checkout@v4
+        with:
+          path: apex-agent
+
+      - name: Checkout rag-service (sibling dep)
+        uses: actions/checkout@v4
+        with:
+          repository: richard-fty/rag-service
+          path: rag-service
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+        working-directory: apex-agent
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+        working-directory: apex-agent
+
+      - name: Run benchmark against baseline
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          uv run python -m eval.runner \
+            --scenario core_agent \
+            --strategies truncate \
+            --baseline baselines/core_agent.json
+        working-directory: apex-agent
+
+  # ── Release gate summary ─────────────────────────────────────────────────
+  # Depends on all gates; provides a single required status check for branch
+  # protection. Wire this check to the "Require status checks" rule.
+  release-gate:
+    name: Release Gate
+    needs: [t1-hard-gate, t3-regression-gate, unit-tests, benchmark-regression-gate]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all gates passed
+        run: |
+          if [ "${{ needs.t1-hard-gate.result }}" != "success" ]; then
+            echo "BLOCKED: T1 hard gate failed — release is blocked"
+            exit 1
+          fi
+          if [ "${{ needs.t3-regression-gate.result }}" != "success" ]; then
+            echo "BLOCKED: T3 regression gate failed — release is blocked"
+            exit 1
+          fi
+          if [ "${{ needs.unit-tests.result }}" != "success" ]; then
+            echo "BLOCKED: Unit tests failed — release is blocked"
+            exit 1
+          fi
+          # benchmark gate is opt-in via APEX_CI_RUN_BENCHMARK — skipped is OK,
+          # but a run that did execute and failed blocks the release.
+          if [ "${{ needs.benchmark-regression-gate.result }}" = "failure" ]; then
+            echo "BLOCKED: Benchmark regression gate failed — release is blocked"
+            exit 1
+          fi
+          echo "All gates passed — release is clear"

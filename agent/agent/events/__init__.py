@@ -1,0 +1,73 @@
+"""Typed event schema and in-process event bus for the agent runtime.
+
+Events are the single contract between the runtime and any consumer
+(TUI, CLI, FastAPI/SSE handler). The runtime publishes `AgentEvent`s to
+an `EventBus`; consumers subscribe.
+"""
+
+from agent.events.bus import EventBus, InMemoryEventBus
+from agent.events.schema import (
+    AgentEvent,
+    AgentEventBase,
+    ArtifactCreated,
+    ArtifactDeleted,
+    ArtifactFinalized,
+    ArtifactKind,
+    ArtifactPatch,
+    ArtifactPatchOp,
+    ApprovalRequested,
+    ApprovalResolved,
+    AssistantMessage,
+    AssistantNote,
+    AssistantToken,
+    ErrorEvent,
+    PlanStep,
+    PlanUpdated,
+    SandboxExecFinished,
+    SandboxExecOutput,
+    SandboxExecStarted,
+    SessionCreated,
+    SkillAutoLoaded,
+    StreamEnd,
+    ToolDenied,
+    ToolFinished,
+    ToolStarted,
+    TurnFinished,
+    TurnStarted,
+    UsageEvent,
+    event_adapter,
+)
+
+__all__ = [
+    "AgentEvent",
+    "AgentEventBase",
+    "ApprovalRequested",
+    "ApprovalResolved",
+    "ArtifactCreated",
+    "ArtifactDeleted",
+    "ArtifactFinalized",
+    "ArtifactKind",
+    "ArtifactPatch",
+    "ArtifactPatchOp",
+    "AssistantMessage",
+    "AssistantNote",
+    "AssistantToken",
+    "ErrorEvent",
+    "EventBus",
+    "InMemoryEventBus",
+    "PlanStep",
+    "PlanUpdated",
+    "SandboxExecFinished",
+    "SandboxExecOutput",
+    "SandboxExecStarted",
+    "SessionCreated",
+    "SkillAutoLoaded",
+    "StreamEnd",
+    "ToolDenied",
+    "ToolFinished",
+    "ToolStarted",
+    "TurnFinished",
+    "TurnStarted",
+    "UsageEvent",
+    "event_adapter",
+]

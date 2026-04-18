@@ -12,12 +12,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
-logging.basicConfig(level=logging.ERROR)
-logging.getLogger("LiteLLM").setLevel(logging.ERROR)
-logging.getLogger("httpx").setLevel(logging.ERROR)
+_DEBUG = os.environ.get("APEX_DEBUG", "").lower() in ("1", "true", "yes")
+_ROOT_LEVEL = logging.DEBUG if _DEBUG else logging.ERROR
+_NOISY_LEVEL = logging.INFO if _DEBUG else logging.ERROR
+if _DEBUG:
+    # Route logs to the Textual devtools console only — do NOT write to stderr,
+    # which would leak onto the TUI screen.
+    from textual.logging import TextualHandler
+    logging.basicConfig(level=_ROOT_LEVEL, handlers=[TextualHandler()], force=True)
+else:
+    logging.basicConfig(level=_ROOT_LEVEL)
+logging.getLogger("LiteLLM").setLevel(_NOISY_LEVEL)
+logging.getLogger("httpx").setLevel(_NOISY_LEVEL)
 
 from rich.markdown import Markdown
 from rich.text import Text
@@ -32,7 +42,7 @@ from textual.reactive import reactive
 from textual.timer import Timer
 
 from agent.core.models import TokenUsage
-from agent.runtime.shared_runner import RunnerEvent, SharedTurnRunner
+from agent.runtime.shared_runner import RunnerEvent, SessionEventStream, SharedTurnRunner
 from agent.session.engine import SessionEngine
 from agent.policy.access_control import AccessController, get_policy
 from agent.runtime.cost_tracker import CostTracker
@@ -661,8 +671,15 @@ class ApexAgentApp(App):
         thinking.show("Thinking")
 
         self._turn_count += 1
+        after = self._runner.start_turn_background(user_input)
         await self._consume_runner_events(
-            self._runner.start_turn(user_input),
+            SessionEventStream(
+                self._runner.archive,
+                self._runner.session_id,
+            ).stream(
+                after=after,
+                stop_states={"waiting_approval", "completed", "failed", "cancelled"},
+            ),
             output,
             thinking,
             input_widget,
@@ -679,8 +696,15 @@ class ApexAgentApp(App):
         input_widget.disabled = True
         approval.clear_request()
         thinking.show("Resuming after approval")
+        after = self._runner.resume_pending_background(action)
         await self._consume_runner_events(
-            self._runner.resume_pending(action),
+            SessionEventStream(
+                self._runner.archive,
+                self._runner.session_id,
+            ).stream(
+                after=after,
+                stop_states={"waiting_approval", "completed", "failed", "cancelled"},
+            ),
             output,
             thinking,
             input_widget,

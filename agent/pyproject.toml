@@ -1,0 +1,46 @@
+[project]
+name = "apex-agent-core"
+version = "0.1.0"
+description = "Apex Agent core library — runtime, events, tools, policy."
+requires-python = ">=3.11"
+dependencies = [
+    # LLM
+    "litellm>=1.40.0",
+    # Data
+    "yfinance>=0.2.36",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    # Charts
+    "plotext>=5.2.8",
+    "mplfinance>=0.12.10b0",
+    "matplotlib>=3.8.0",
+    # Config
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    # Web / HTTP (litellm + tool implementations)
+    "httpx>=0.27.0",
+    # Retrieval (workspace-external path dep)
+    "rag-service",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Expose the package modules at these top-level import paths so existing
+# call sites (`from agent.X import ...`, `from tools import ...`) keep working.
+[tool.hatch.build.targets.wheel]
+packages = [
+    "agent",
+    "tools",
+    "services",
+    "scenarios",
+    "skill_packs",
+    "eval",
+]
+# Top-level single-file modules (CLI entry + settings). Listed here so
+# they ship in the wheel; editable installs pick them up automatically via
+# the `.pth` file hatch writes for the `agent/` source dir.
+[tool.hatch.build.targets.wheel.sources]
+"main.py" = "main.py"
+"config.py" = "config.py"
