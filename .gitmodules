@@ -1,0 +1,3 @@
+[submodule "rag-service"]
+	path = rag-service
+	url = https://github.com/richard-fty/rag-service.git

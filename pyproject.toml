@@ -12,7 +12,7 @@ members = ["core", "backend", "tui"]
 
 # External path-based sources the workspace shares.
 [tool.uv.sources]
-rag-service = { path = "../rag-service" }
+rag-service = { path = "./rag-service" }
 apex-agent-core = { workspace = true }
 
 [tool.pytest.ini_options]
