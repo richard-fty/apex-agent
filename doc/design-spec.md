@@ -66,9 +66,9 @@ Required events (minimum):
 - `recovery_event` (malformed args, tool failure, unknown tool)
 
 In this repo:
-- `agent/session/engine.py` — turn-scoped session state and context assembly
-- `agent/session/archive.py` — append-only SQLite event log with positional reads (`get_events(session_id, after=cursor)`) — the durable source of truth
-- `agent/session/store.py` — deprecated JSON-file store; kept for compatibility only
+- `core/src/agent/session/engine.py` — turn-scoped session state and context assembly
+- `core/src/agent/session/archive.py` — append-only SQLite event log with positional reads (`get_events(session_id, after=cursor)`) — the durable source of truth
+- `core/src/agent/session/store.py` — deprecated JSON-file store; kept for compatibility only
 
 ### 2.2 Harness
 
@@ -87,13 +87,13 @@ Responsibilities per iteration:
 8. decide continue / pause (approval) / stop
 
 In this repo:
-- `agent/runtime/loop.py` — entry
-- `agent/runtime/managed_runtime.py` — the loop body; run-scoped state is now persisted in the session archive
-- `agent/runtime/wake.py` — `wake(session_id)` implementation: boots a fresh harness from the event log
-- `agent/runtime/orchestrator.py` — `SessionOrchestrator`; owns `RuntimeGuard` creation so limits are external to the harness
-- `agent/runtime/tool_dispatch.py` — tool registry, routing, and universal `execute_by_name(name, input) -> str`
-- `agent/context/assembler.py` — context assembly
-- `eval/runner.py` — eval driver that wraps the harness for scenario runs
+- `core/src/agent/runtime/loop.py` — entry
+- `core/src/agent/runtime/managed_runtime.py` — the loop body; run-scoped state is now persisted in the session archive
+- `core/src/agent/runtime/wake.py` — `wake(session_id)` implementation: boots a fresh harness from the event log
+- `core/src/agent/runtime/orchestrator.py` — `SessionOrchestrator`; owns `RuntimeGuard` creation so limits are external to the harness
+- `core/src/agent/runtime/tool_dispatch.py` — tool registry, routing, and universal `execute_by_name(name, input) -> str`
+- `core/src/agent/context/assembler.py` — context assembly
+- `core/src/eval/runner.py` — eval driver that wraps the harness for scenario runs
 
 ### 2.3 Sandbox
 
@@ -107,7 +107,7 @@ Requirements:
 - **credentials never live inside the sandbox**; auth is either bundled with a provisioned resource or fetched from an external vault (MCP proxy / secret manager)
 
 In this repo:
-- `agent/runtime/sandbox.py` — `BaseSandbox`, `LocalSandbox`, `DockerSandbox`
+- `core/src/agent/runtime/sandbox.py` — `BaseSandbox`, `LocalSandbox`, `DockerSandbox`
 - `DockerSandbox` provisions a per-session container with no host env forwarding
 - `LocalSandbox` is the fallback: scrubbed env + disposable HOME, but not a true container boundary
 - `create_session_sandbox(session_id)` auto-selects Docker when available; set `SANDBOX_REQUIRE_ISOLATION=true` to fail closed when Docker is absent
@@ -156,10 +156,10 @@ Hands split into two layers. Both are reachable only through `execute(name, inpu
 
 | Layer | Path | Exposed to brain? | Role |
 |---|---|---|---|
-| Tools | `tools/` | Yes, as tool calls | Built-in capabilities: filesystem, shell (via sandbox), web, rag |
-| Skill Packs | `skill_packs/` (see §7) | Only when a pack is loaded | Pluggable domain packs with their own tool surface |
+| Tools | `core/src/tools/` | Yes, as tool calls | Built-in capabilities: filesystem, shell (via sandbox), web, rag |
+| Skill Packs | `core/src/skill_packs/` (see §7) | Only when a pack is loaded | Pluggable domain packs with their own tool surface |
 
-Runtime-internal helpers like `services/retrieval_policy.py` and `services/search_orchestrator.py` are **not hands** — they are harness-side services that decide *when* to inject context or *which* hand to call. They never appear as tool calls.
+Runtime-internal helpers like `core/src/services/retrieval_policy.py` and `core/src/services/search_orchestrator.py` are **not hands** — they are harness-side services that decide *when* to inject context or *which* hand to call. They never appear as tool calls.
 
 ## 7. Apex Extensions
 
@@ -169,12 +169,12 @@ These go beyond the article. Each is a runtime-level concern implemented to matc
 
 Pluggable domain packs installed on disk as `SKILL.md` + `REFERENCE.md` + `tools.py`. A pack advertises keywords; the skill loader pre-loads a pack when intent matches, registers its tools into the dispatcher, and injects its structured prompt.
 
-- `skill_packs/` — installed packs (content)
-- `agent/skills/` — runtime analyzer + loader
+- `core/src/skill_packs/` — installed packs (content)
+- `core/src/agent/skills/` — runtime analyzer + loader
 
 ### 7.2 Retrieval Policy
 
-Retrieval is a **harness service**, not a tool the brain calls. `services/retrieval_policy.py` inspects user input and decides whether to gather local-first evidence (via [rag-service](https://github.com/richard-fty/rag-service)), fall back to web, or skip retrieval. Injected context is attributable (source + score) and compacted before merge.
+Retrieval is a **harness service**, not a tool the brain calls. `core/src/services/retrieval_policy.py` inspects user input and decides whether to gather local-first evidence (via [rag-service](https://github.com/richard-fty/rag-service)), fall back to web, or skip retrieval. Injected context is attributable (source + score) and compacted before merge.
 
 ### 7.3 Approval Model
 
@@ -200,23 +200,24 @@ Release gate: no regression on safety or lifecycle cases; task success stable or
 
 | Concept | Status | Where |
 |---|---|---|
-| Session as durable log | **shipped** — `SessionArchive` is the append-only SQLite event log with positional reads. (The legacy JSON-file `SessionStore` has been removed.) | `agent/session/archive.py` |
-| Stateless harness + `wake` | **shipped** — run-scoped state is persisted in the archive; `wake(session_id)` boots a fresh harness from the event log alone | `agent/runtime/managed_runtime.py`, `agent/runtime/wake.py` |
-| Sandbox boundary | **shipped** — `DockerSandbox` (per-session container, no host env forwarding) with `LocalSandbox` fallback; `sandbox_require_isolation` fails closed when Docker is required but unavailable | `agent/runtime/sandbox.py` |
-| Universal hands (`execute(name, input) -> str`) | **shipped** — `ToolDispatch.execute_by_name(name, input)` is the stable str-return contract for native, MCP-backed, and resource-like tools | `agent/runtime/tool_dispatch.py` |
-| Brain adapter | **shipped** — LiteLLMBrain | `agent/runtime/managed_runtime.py` |
-| Tool dispatch + metadata | **shipped** | `agent/runtime/tool_dispatch.py`, `agent/core/models.py` |
-| Retrieval as service | **shipped** | `services/retrieval_policy.py` |
-| Approval model | **shipped** — allow/ask/deny with resumable pending; approval state persists across harness restarts via archive | `agent/policy/access_control.py`, `agent/policy/approval_manager.py` |
-| Skill packs | **shipped** — discover + analyze + load with intent-based pre-loading | `skill_packs/`, `agent/skills/` |
+| Session as durable log | **shipped** — `SessionArchive` is the append-only SQLite event log with positional reads. `SqliteSessionStore` provides a typed protocol wrapper over the archive for CRUD operations; the legacy JSON-file impl has been removed. | `core/src/agent/session/archive.py`, `core/src/agent/session/store.py` |
+| Stateless harness + `wake` | **shipped** — run-scoped state is persisted in the archive; `wake(session_id)` boots a fresh harness from the event log alone. `SessionOrchestrator.resume_runtime` delegates to `wake()` so there is a single reconstruction path. | `core/src/agent/runtime/managed_runtime.py`, `core/src/agent/runtime/wake.py`, `core/src/agent/runtime/orchestrator.py` |
+| Sandbox boundary | **shipped** — `DockerSandbox` (per-session container, no host env forwarding) with `LocalSandbox` fallback; `sandbox_require_isolation` fails closed when Docker is required but unavailable | `core/src/agent/runtime/sandbox.py` |
+| Universal hands (`execute(name, input) -> str`) | **shipped** — `ToolDispatch.execute_by_name(name, input)` is the stable str-return contract for native, MCP-backed, and resource-like tools | `core/src/agent/runtime/tool_dispatch.py` |
+| Brain adapter | **shipped** — LiteLLMBrain | `core/src/agent/runtime/managed_runtime.py` |
+| Tool dispatch + metadata | **shipped** | `core/src/agent/runtime/tool_dispatch.py`, `core/src/agent/core/models.py` |
+| Retrieval as service | **shipped** | `core/src/services/retrieval_policy.py` |
+| Approval model | **shipped** — allow/ask/deny with resumable pending; approval state persists across harness restarts via archive | `core/src/agent/policy/access_control.py`, `core/src/agent/policy/approval_manager.py` |
+| Skill packs | **shipped** — discover + analyze + load with intent-based pre-loading | `core/src/skill_packs/`, `core/src/agent/skills/` |
 | TUI as event consumer | **shipped** — TUI subscribes to the session event stream; no second runtime | `tui/` |
-| Eval suite scenarios | **shipped** — T1 hard gate + T3 regression suite + T2 multi-domain scenarios | `scenarios/`, `tests/test_t1_managed_agent_properties.py`, `tests/test_t3_apex_extensions.py` |
+| Eval suite scenarios | **shipped** — T1 hard gate + T3 regression suite + T2 multi-domain scenarios | `core/src/scenarios/`, `core/tests/test_t1_managed_agent_properties.py`, `core/tests/test_t3_apex_extensions.py` |
 | CI release gate | **shipped** — T1 + T3 + unit tests wired as required checks | `.github/workflows/ci.yml` |
 
 **Remaining gaps (see [gaps-review-2026-04-18.md](gaps-review-2026-04-18.md) for the most recent review; earlier tracking docs live in [archived/](archived/)):**
 
 - T1.5 still cannot run real Docker in CI; the Docker-argv inspection test is a static proof and the full integration test requires a Docker-enabled runner.
 - Benchmark-regression-gate in CI is opt-in (APEX_CI_RUN_BENCHMARK=1) and assumes API credentials are present — not enforced on every PR.
+- Runtime module count has been reduced (tracking consolidated into `tracking.py`, orchestrator delegates to `wake()`), but further collapse of the harness entry points is possible.
 
 ## 9. Roadmap
 
@@ -224,7 +225,7 @@ Remaining items in priority order:
 
 1. Add a runner-level hook for LT1 (mid-run kill + `wake()` continuation) and LT3 (cancel-at-70% + partial-artifact verification) so the `tier` field becomes enforced rather than descriptive.
 2. Wire a default benchmark baseline (`baselines/core_agent.json`) and enable `APEX_CI_RUN_BENCHMARK=1` once API credentials are provisioned in the CI environment.
-3. Collapse `agent/runtime/{loop,managed_runtime,orchestrator,shared_runner}.py` into a tighter set — the article's managed-agent has one stateless harness loop.
+3. Further collapse of harness entry points — `shared_runner.py` is the only external consumer; `loop.py` can be thinned further once the server is the sole entry.
 
 ## 10. What Good Looks Like
 

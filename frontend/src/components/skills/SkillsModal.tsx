@@ -86,7 +86,7 @@ export function SkillsModal({
           {skills && skills.length === 0 && (
             <div className="p-6 text-center text-muted-foreground text-sm">
               No skills available. Add skill packs under{" "}
-              <code className="bg-secondary px-1 py-0.5 rounded">agent/skill_packs/</code>.
+              <code className="bg-secondary px-1 py-0.5 rounded">core/src/skill_packs/</code>.
             </div>
           )}
           {skills?.map((s) => (

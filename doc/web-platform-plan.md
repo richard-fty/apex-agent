@@ -20,11 +20,11 @@
 ## 3. Current state (honest baseline)
 
 - **No server.** `tui/app.py` and `main.py` both call `SharedTurnRunner` in-process.
-- **SQLite archive** (`agent/session/archive.py`) stores events per session.
+- **SQLite archive** (`core/src/agent/session/archive.py`) stores events per session.
 - **Consumer polls the archive** (`subscribe_events`, 100ms loop) and uses session state as termination signal — fragile; source of recent races.
 - **Event vocabulary is thin**: tokens, tool_started, approval_requested, turn_finished. Not enough for an artifact-oriented UI.
 - **Artifacts have no first-class model**. File writes happen in the sandbox, but the UI has no way to know "a file was written, here's its content."
-- **Sandboxing exists** (`agent/runtime/sandbox.py` with Docker + local backends).
+- **Sandboxing exists** (`core/src/agent/runtime/sandbox.py` with Docker + local backends).
 
 ## 4. Target architecture (end state)
 
@@ -64,7 +64,7 @@ Phase 1 collapses the right three columns into a single process (SQLite + filesy
 
 ## 5. Core abstractions (stable across all phases)
 
-### 5.1 Event schema (`agent/events/schema.py`)
+### 5.1 Event schema (`core/src/agent/events/schema.py`)
 
 Pydantic discriminated union. Every event has: `seq`, `session_id`, `turn_id`, `timestamp`, `type`, and a type-specific payload. Core types:
 
@@ -96,7 +96,7 @@ Pydantic discriminated union. Every event has: `seq`, `session_id`, `turn_id`, `
 
 Each event is a subclass of a base `AgentEvent` with `type: Literal[...]` as the discriminator. Pydantic `.model_dump_json()` serializes for SSE; `TypeAdapter(Event).validate_json()` deserializes on client.
 
-### 5.2 Event bus (`agent/events/bus.py`)
+### 5.2 Event bus (`core/src/agent/events/bus.py`)
 
 ```python
 class EventBus(Protocol):
@@ -112,7 +112,7 @@ Two implementations:
 
 The runtime depends only on the `EventBus` interface.
 
-### 5.3 Artifact store (`agent/artifacts/store.py`)
+### 5.3 Artifact store (`core/src/agent/artifacts/store.py`)
 
 ```python
 class ArtifactStore(Protocol):
@@ -129,7 +129,7 @@ Two implementations:
 - `FilesystemArtifactStore`: writes to `results/artifacts/{session_id}/{artifact_id}`, JSON metadata sidecar.
 - `S3ArtifactStore` (Phase 4): S3-compatible, signed URLs for client reads.
 
-### 5.4 Session store (`agent/session/store.py`)
+### 5.4 Session store (`core/src/agent/session/store.py`)
 
 ```python
 class SessionStore(Protocol):
@@ -160,17 +160,16 @@ Tools that produce file-like output (code execution, file writes, search results
 
 The agent's todo list is an artifact of kind `plan`. Updates emit `plan_updated` with the full current plan (small enough that diffs aren't worth it at first).
 
-## 7. Server (`agent/server/`)
+## 7. Server (`backend/apex_server/`)
 
 FastAPI app. Structure:
-- `agent/server/app.py` — app factory, middleware, CORS.
-- `agent/server/routes/sessions.py` — session CRUD.
-- `agent/server/routes/turns.py` — POST new turn.
-- `agent/server/routes/events.py` — SSE stream (`GET /sessions/{id}/events`).
-- `agent/server/routes/approvals.py` — POST approval resolution.
-- `agent/server/routes/artifacts.py` — GET artifact content (bytes, signed in Phase 4).
-- `agent/server/auth.py` — auth: registration, login, logout, session cookie validation.
-- `agent/server/routes/auth.py` — `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`.
+- `backend/apex_server/app.py` — app factory, middleware, CORS.
+- `backend/apex_server/routes/sessions_routes.py` — session CRUD
+- `backend/apex_server/routes/turns_routes.py` — turn kickoff + approval resolution
+- `backend/apex_server/routes/events_routes.py` — SSE stream (`GET /sessions/{id}/events`)
+- `backend/apex_server/routes/artifacts_routes.py` — GET artifact content
+- `backend/apex_server/auth.py` — auth: registration, login, logout, session cookie validation.
+- `backend/apex_server/routes/auth_routes.py` — `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`.
 
 ### 7.0 Auth model (MVP)
 
@@ -199,8 +198,14 @@ Headers:
 Response:
   Content-Type: text/event-stream
   Each event: `id: <seq>\nevent: <type>\ndata: <json>\n\n`
-  Closes on `stream_end` event or client disconnect.
 ```
+
+**Resolved: `stream_end` is a turn boundary, not a connection close.** After
+emitting `StreamEnd`, the runtime may publish more events for subsequent turns
+on the same session. The SSE handler re-subscribes to the event bus after each
+`StreamEnd` so the same HTTP connection stays open across multiple turns. Clients
+that close on `stream_end` will miss follow-up turns; clients must treat it as
+turn-end and continue reading.
 
 ### 7.2 Turn lifecycle over HTTP
 
@@ -367,10 +372,10 @@ At every phase, the React client and HTTP/SSE API are unchanged.
 ## 10. Milestones & commit plan
 
 ### Milestone M1 — Contracts (1–2 days)
-- `agent/events/schema.py`: event types + pydantic discriminated union
-- `agent/events/bus.py`: `EventBus` protocol + `InMemoryEventBus`
-- `agent/artifacts/model.py` + `agent/artifacts/store.py`: `ArtifactStore` protocol + `FilesystemArtifactStore`
-- `agent/session/store.py`: `SessionStore` protocol + SQLite impl wrapping today's archive
+- `core/src/agent/events/schema.py`: event types + pydantic discriminated union
+- `core/src/agent/events/bus.py`: `EventBus` protocol + `InMemoryEventBus`
+- `core/src/agent/artifacts/model.py` + `core/src/agent/artifacts/store.py`: `ArtifactStore` protocol + `FilesystemArtifactStore`
+- `core/src/agent/session/store.py`: `SessionStore` protocol + SQLite impl wrapping today's archive
 - Tests for each contract
 
 One PR, no behavior change to existing code yet.
@@ -383,7 +388,7 @@ One PR, no behavior change to existing code yet.
 - Remove `SessionEventStream` / `subscribe_events` polling path
 - Tests: runtime emits expected event sequences
 
-Delete `agent/session/archive.py::subscribe_events`. This is the commit where the races stop existing structurally.
+Delete `core/src/agent/session/archive.py::subscribe_events`. This is the commit where the races stop existing structurally.
 
 ### Milestone M3 — Artifact instrumentation (2 days)
 - Wire `artifact_*` events into:
@@ -394,7 +399,7 @@ Delete `agent/session/archive.py::subscribe_events`. This is the commit where th
 - Tests
 
 ### Milestone M4 — FastAPI server + auth (5–6 days)
-- `agent/server/app.py` + routes
+- `backend/apex_server/app.py` + routes
 - **Auth**: users + auth_sessions tables, argon2 hashing, register/login/logout endpoints, `require_user` dependency, rate-limited login
 - **Session ownership**: `owner_user_id` FK, enforced on every agent session route (404 on mismatch)
 - SSE endpoint with `Last-Event-ID` replay, gated by `require_user`

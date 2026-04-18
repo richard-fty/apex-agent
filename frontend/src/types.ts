@@ -1,4 +1,4 @@
-/** Event schema mirrors agent/events/schema.py. */
+/** Event schema mirrors `core/src/agent/events/schema.py`. */
 
 export type ArtifactKind =
   | "code" | "markdown" | "text" | "json"

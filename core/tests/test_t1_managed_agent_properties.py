@@ -859,3 +859,51 @@ def test_t1_9_orchestrator_creates_guard_not_runtime(tmp_path) -> None:
     assert len(events) > 0
     assert not hasattr(handle.runtime, "_guard")
     assert not hasattr(handle.runtime, "_active_trace")
+
+
+# ---------------------------------------------------------------------------
+# T1.10 — orchestrator_resume_delegates_to_wake
+# Verify that SessionOrchestrator.resume_runtime delegates to wake() and
+# produces the same recovery contract as calling wake() directly.
+# ---------------------------------------------------------------------------
+
+def test_t1_10_orchestrator_resume_delegates_to_wake(tmp_path) -> None:
+    """SessionOrchestrator.resume_runtime produces a valid handle whose runtime
+    state matches what wake() would produce — proving the orchestrator no longer
+    has its own duplicate recovery logic."""
+    db = str(tmp_path / "archive.db")
+    archive = SessionArchive(db_path=db)
+
+    brain = FakeBrain([[_chunk(content="done", usage=_usage())]])
+    rt = _make_runtime(tmp_path, brain, archive=archive)
+    session_id = rt.session.session_id
+
+    async def run():
+        async for ev in rt.start_turn("hello", guard=RuntimeGuard(rt.runtime_config)):
+            pass
+
+    asyncio.run(run())
+
+    # Recovery via orchestrator
+    orchestrator = SessionOrchestrator(archive=archive)
+    handle = orchestrator.resume_runtime(
+        session_id=session_id,
+        session_engine=FakeEngine(),
+        model="fake",
+        runtime_config=RuntimeConfig(),
+        access_controller=AllowController(),
+    )
+
+    # Recovery via direct wake()
+    from agent.runtime.wake import wake
+    direct = wake(archive, session_id, runtime_config=RuntimeConfig())
+
+    # Both paths must recover the same session
+    assert handle.runtime.session.session_id == session_id
+    assert direct.session.session_id == session_id
+    # Both must reach a terminal state
+    assert handle.runtime.session.state in (AgentState.COMPLETED, AgentState.FAILED)
+    assert direct.session.state in (AgentState.COMPLETED, AgentState.FAILED)
+    # Both must have the same number of messages in the engine
+    # (wake rebuilds from events; orchestrator delegates to wake)
+    assert len(handle.runtime.session_engine.messages) == len(direct.session_engine.messages)

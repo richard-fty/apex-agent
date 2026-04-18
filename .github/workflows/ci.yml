@@ -166,7 +166,7 @@ jobs:
           uv run python -m eval.runner \
             --scenario core_agent \
             --strategies truncate \
-            --baseline baselines/core_agent.json
+            --baseline core/src/eval/baselines/core_agent.json
         working-directory: apex-agent
 
   # ── Release gate summary ─────────────────────────────────────────────────

@@ -29,8 +29,8 @@ What "done" looks like:
   - real MCP-backed tool path (connector/server), and real resource-like access path
 
 Pointers:
-- `agent/runtime/tool_dispatch.py:125`
-- `tests/test_t1_managed_agent_properties.py:470`
+- `core/src/agent/runtime/tool_dispatch.py:125`
+- `core/tests/test_t1_managed_agent_properties.py:470`
 - `doc/eval-suite.md:47`
 
 What "done" looks like:
@@ -49,9 +49,9 @@ The tests exist and are directionally right, but several are still "approximatio
 - T1.5 credential isolation is mostly about LocalSandbox env scrubbing and HOME isolation; it does not demonstrate real host credential file blocking under a strict isolation backend.
 
 Pointers:
-- `tests/test_t1_managed_agent_properties.py:228`
-- `tests/test_t1_managed_agent_properties.py:275`
-- `tests/test_t1_managed_agent_properties.py:353`
+- `core/tests/test_t1_managed_agent_properties.py:228`
+- `core/tests/test_t1_managed_agent_properties.py:275`
+- `core/tests/test_t1_managed_agent_properties.py:353`
 - `doc/eval-suite.md:26`
 
 ### 4. Sandbox Isolation: Conditional Strong Mode, Local Fallback Still Exists
@@ -60,7 +60,7 @@ Pointers:
 - A "fail closed" path exists when `sandbox_require_isolation=True`, which is good, but it still means strict isolation is not universal by default.
 
 Pointers:
-- `agent/runtime/sandbox.py:289`
+- `core/src/agent/runtime/sandbox.py:289`
 - `config.py` (search `sandbox_require_isolation`)
 
 Decision needed:
@@ -76,39 +76,58 @@ But remaining unevenness still exists:
 - Other scenario packs (`research_and_report`, `stock_strategy`) are still lopsided in ability/difficulty coverage.
 
 Pointers:
-- `scenarios/core_agent/test_cases.json:1`
-- `scenarios/research_and_report/test_cases.json:1`
-- `scenarios/stock_strategy/test_cases.json:1`
+- `core/src/scenarios/core_agent/test_cases.json:1`
+- `core/src/scenarios/research_and_report/test_cases.json:1`
+- `core/src/scenarios/stock_strategy/test_cases.json:1`
 - `doc/eval-suite.md:160`
 
 Also note:
 - The evaluators do not currently treat `tier: LT1/LT3` as special semantics; they're just metadata unless the runner/evaluator enforces "kill and resume" or "cancel and partial value" behavior.
 
 Pointers:
-- `scenarios/core_agent/evaluator.py:32`
+- `core/src/scenarios/core_agent/evaluator.py:32`
 
 ### 6. Release Gate "Runner-Level" Logic Exists, But Repo-Level Enforcement Is Partial
 
-- CI runs T1/T3/unit tests, but it does not run the benchmark runner baseline/regression gate path (`eval/runner.py` + comparator baseline).
-- The "regression gate" described in docs (baseline comparison, budget hard-fail) is not wired into `.github/workflows/ci.yml`.
+- CI runs T1/T3/unit tests, and now uses `uv sync --extra dev` (not `pip install -r requirements.txt`).
+- The benchmark regression gate still requires `APEX_CI_RUN_BENCHMARK=1` and is not enforced on every PR.
 
 Pointers:
-- `eval/runner.py:1`
-- `eval/comparator.py:1`
+- `core/src/eval/runner.py:1`
+- `core/src/eval/comparator.py:1`
 - `.github/workflows/ci.yml:1`
 
-### 7. Legacy `SessionStore` Surface Still Present
+### 7. Legacy `SessionStore` Surface — Evolved, Not Removed
 
-- `SessionStore` is marked deprecated, but remains in constructor signatures and tests still instantiate it.
-- This keeps conceptual noise alive and makes it harder to say "archive-only surfaces" are cleanly landed.
+- `SessionStore` was described as "deprecated" in earlier reviews. It has been refactored into a typed `Protocol` + `SqliteSessionStore` wrapper that delegates to `SessionArchive`.
+- The old JSON-file impl has been removed. The current `store.py` is now the proper CRUD layer for session metadata, with `list_events` and `append_event` bridging typed event access over the archive.
+- The design spec now correctly describes it as a typed protocol wrapper rather than a "removed" artifact.
 
 Pointers:
-- `agent/session/store.py:1`
-- `agent/runtime/managed_runtime.py:113`
-- `agent/runtime/orchestrator.py:28`
+- `core/src/agent/session/store.py:1`
 
-## Notes On Local Verification
+### 8. Route and Runtime Cleanup — Completed
 
-This review is primarily source-based (read + trace of code paths).
-Local test execution in this environment was blocked by missing Python deps and `uv` cache permission issues, so this doc intentionally does not claim "tests pass".
+- `sessions_routes.py` has been split into focused modules: `sessions_routes.py`, `turns_routes.py`, `events_routes.py`, `artifacts_routes.py`, `auth_routes.py`, `skills_routes.py`.
+- `session_support.py` now contains only Pydantic models and ownership helpers. Runner construction has been extracted into `backend/apex_server/runner.py`.
+- `SessionOrchestrator.resume_runtime` has been consolidated to delegate to `wake()`, eliminating duplicate recovery logic.
+- `token_tracker.py` and `cost_tracker.py` have been consolidated into `tracking.py` with backward-compatible re-exports.
 
+Pointers:
+- `backend/apex_server/runner.py`
+- `backend/apex_server/routes/session_support.py`
+- `core/src/agent/runtime/orchestrator.py`
+- `core/src/agent/runtime/tracking.py`
+
+### 9. SSE / Stream-end Semantics — Resolved
+
+- `StreamEnd` is formally a **turn boundary**, not a connection close. The SSE handler re-subscribes after `StreamEnd` to receive the next turn's events on the same HTTP connection.
+- Reconnection uses `Last-Event-ID` to replay persisted events, then attaches to the live bus.
+- This decision is documented in `events_routes.py` and `doc/web-platform-plan.md` §7.1.
+
+### 10. Remaining Gaps (Updated)
+
+- T1.5 still cannot run real Docker in CI.
+- Benchmark-regression-gate in CI remains opt-in.
+- T1 test depth: T1.2 now asserts full message equivalence; T1.3 now checks tool_call_id matching; but a full mid-run kill + resume boundary test is still needed.
+- Universal hands parity proof: the T1.7 test covers native, MCP-stub, and resource-stub paths for the str-return contract, but doesn't yet verify consistent timeout/error behavior across layers.

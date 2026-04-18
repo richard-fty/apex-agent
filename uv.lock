@@ -192,7 +192,7 @@ wheels = [
 [[package]]
 name = "apex-agent-core"
 version = "0.1.0"
-source = { editable = "agent" }
+source = { editable = "core" }
 dependencies = [
     { name = "httpx" },
     { name = "litellm" },
@@ -260,7 +260,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "apex-agent-core", editable = "agent" },
+    { name = "apex-agent-core", editable = "core" },
     { name = "argon2-cffi", specifier = ">=25.1.0" },
     { name = "fastapi", specifier = ">=0.136.0" },
     { name = "slowapi", specifier = ">=0.1.9" },
@@ -280,7 +280,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "apex-agent-core", editable = "agent" },
+    { name = "apex-agent-core", editable = "core" },
     { name = "rich", specifier = ">=13.7.0" },
     { name = "textual", specifier = ">=0.50.0" },
 ]

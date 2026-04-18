@@ -1,0 +1,15 @@
+{
+  "_comment": "Stub baseline for core_agent scenario. Replace with real benchmark results once APEX_CI_RUN_BENCHMARK=1 is enabled with API credentials.",
+  "scenario": "core_agent",
+  "model": "deepseek/deepseek-chat",
+  "strategy": "truncate",
+  "timestamp": "2026-04-18T00:00:00Z",
+  "results": [],
+  "aggregate": {
+    "avg_score": 0.0,
+    "avg_tokens": 0,
+    "avg_cost_usd": 0.0,
+    "avg_time_seconds": 0.0,
+    "num_cases": 0
+  }
+}

@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["agent", "backend", "tui"]
+members = ["core", "backend", "tui"]
 
 # External path-based sources the workspace shares.
 [tool.uv.sources]
@@ -18,7 +18,7 @@ apex-agent-core = { workspace = true }
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Discover tests from every member that ships them.
-testpaths = ["agent/tests", "backend/tests"]
+testpaths = ["core/tests", "backend/tests"]
 
 [dependency-groups]
 dev = [

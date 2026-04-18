@@ -1,6 +1,6 @@
 """Skill management routes: list + load + unload per session.
 
-Mirrors the agent's ``SkillLoader`` API (agent/agent/skills/loader.py) over
+Mirrors the agent's ``SkillLoader`` API (`core/src/agent/skills/loader.py`) over
 HTTP so the web UI can show available/loaded skills and let the user toggle
 them explicitly.
 """
@@ -11,7 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from apex_server.deps import AppState, User, get_state, require_user
-from apex_server.routes.sessions_routes import _get_or_build_runner, _owned_session
+from apex_server.runner import get_or_build_runner
+from apex_server.routes.session_support import owned_session
 
 
 router = APIRouter(prefix="/sessions/{session_id}/skills", tags=["skills"])
@@ -34,8 +35,8 @@ async def list_skills(
     user: User = Depends(require_user),
     state: AppState = Depends(get_state),
 ) -> SkillListOut:
-    sess = await _owned_session(session_id, user, state)
-    runner = _get_or_build_runner(state, session_id, sess.model)
+    sess = await owned_session(session_id, user, state)
+    runner = get_or_build_runner(state, session_id, sess.model)
     loader = runner.runtime.session_engine.skill_loader
     # Ensure `available` is populated (idempotent).
     if not loader.available:
@@ -61,8 +62,8 @@ async def load_skill(
     user: User = Depends(require_user),
     state: AppState = Depends(get_state),
 ) -> SkillOut:
-    sess = await _owned_session(session_id, user, state)
-    runner = _get_or_build_runner(state, session_id, sess.model)
+    sess = await owned_session(session_id, user, state)
+    runner = get_or_build_runner(state, session_id, sess.model)
     loader = runner.runtime.session_engine.skill_loader
     if not loader.available:
         loader.discover()
@@ -88,8 +89,8 @@ async def unload_skill(
     user: User = Depends(require_user),
     state: AppState = Depends(get_state),
 ):
-    sess = await _owned_session(session_id, user, state)
-    runner = _get_or_build_runner(state, session_id, sess.model)
+    sess = await owned_session(session_id, user, state)
+    runner = get_or_build_runner(state, session_id, sess.model)
     loader = runner.runtime.session_engine.skill_loader
     if skill_name in loader.loaded:
         loader.unload_skill(skill_name)

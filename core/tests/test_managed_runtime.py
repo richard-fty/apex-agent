@@ -316,18 +316,23 @@ def test_orchestrator_resume_runtime_rehydrates_messages(tmp_path) -> None:
     runtime.session.append_event("assistant_message_added", message={"role": "assistant", "content": "world"})
     runtime._persist_session()
 
-    restored_engine = FakeSessionEngine()
     handle = orchestrator.resume_runtime(
         session_id=runtime.session.session_id,
-        session_engine=restored_engine,
+        session_engine=FakeSessionEngine(),
         model="fake-model",
         runtime_config=RuntimeConfig(max_steps=2, timeout_seconds=30),
         access_controller=AllowAccessController(),
     )
 
     assert handle.session_id == runtime.session.session_id
-    assert restored_engine.messages[0]["content"] == "hello"
-    assert restored_engine.messages[1]["content"] == "world"
+    # wake() rebuilds a SessionEngine and replays events into it
+    recovered_messages = [
+        m for m in handle.runtime.session_engine.messages
+        if m.get("role") in ("user", "assistant")
+    ]
+    assert len(recovered_messages) >= 2
+    assert recovered_messages[0]["content"] == "hello"
+    assert recovered_messages[1]["content"] == "world"
 
 
 def test_orchestrator_resume_runtime_uses_archive_snapshot_state(tmp_path) -> None:
@@ -351,10 +356,9 @@ def test_orchestrator_resume_runtime_uses_archive_snapshot_state(tmp_path) -> No
     runtime.session.set_state(AgentState.WAITING_APPROVAL)
     runtime._persist_session()
 
-    restored_engine = FakeSessionEngine()
     handle = orchestrator.resume_runtime(
         session_id=runtime.session.session_id,
-        session_engine=restored_engine,
+        session_engine=FakeSessionEngine(),
         model="fake-model",
         runtime_config=RuntimeConfig(max_steps=2, timeout_seconds=30),
         access_controller=AllowAccessController(),

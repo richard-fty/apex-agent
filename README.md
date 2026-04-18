@@ -52,20 +52,20 @@ uv run python -m eval
 ## Project Structure
 
 ```
-agent/
-  core/           # models, prompts
-  runtime/        # harness loop, orchestrator, sandbox, dispatch, guards, trace, cost/token tracking
-  session/        # session engine, persistence store
-  policy/         # access control, approval manager, permission policy
-  skills/         # skill-pack analyzer + loader (runtime)
-  context/        # context assembler
-tools/            # filesystem, shell, web, rag, skill_meta — hands exposed to the brain
-skill_packs/      # pluggable domain packs (e.g., stock_strategy) — content
-services/         # retrieval policy, search orchestrator, web search — harness-side services
-scenarios/        # eval scenarios (core_agent, stock_strategy)
-eval/             # eval runner, metrics, comparator, report, mock_mode
+core/
+  src/
+    agent/        # import package: models, runtime, session, policy, skills, context, artifacts, events
+    tools/        # filesystem, shell, web, rag, skill_meta — hands exposed to the brain
+    skill_packs/  # pluggable domain packs (e.g., stock_strategy) — content
+    services/     # retrieval policy, search orchestrator, web search — harness-side services
+    scenarios/    # eval scenarios (core_agent, stock_strategy)
+    eval/         # eval runner, metrics, comparator, report, mock_mode
+  tests/          # pytest suite for the core member
+  main.py         # CLI entrypoint
+  config.py       # shared settings
+backend/          # FastAPI server
 tui/              # Terminal UI (Textual)
-tests/            # pytest suite
+frontend/         # Vite/React web client
 doc/              # design spec, eval suite, design checklist
 .codex/           # contributor guidance (AGENTS.md) — local-only
 ```

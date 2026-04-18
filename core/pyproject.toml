@@ -30,17 +30,18 @@ build-backend = "hatchling.build"
 # Expose the package modules at these top-level import paths so existing
 # call sites (`from agent.X import ...`, `from tools import ...`) keep working.
 [tool.hatch.build.targets.wheel]
+dev-mode-dirs = ["src", "."]
 packages = [
-    "agent",
-    "tools",
-    "services",
-    "scenarios",
-    "skill_packs",
-    "eval",
+    "src/agent",
+    "src/tools",
+    "src/services",
+    "src/scenarios",
+    "src/skill_packs",
+    "src/eval",
 ]
 # Top-level single-file modules (CLI entry + settings). Listed here so
 # they ship in the wheel; editable installs pick them up automatically via
-# the `.pth` file hatch writes for the `agent/` source dir.
+# the `.pth` file hatch writes for the `core/src/` source dir.
 [tool.hatch.build.targets.wheel.sources]
 "main.py" = "main.py"
 "config.py" = "config.py"

@@ -10,8 +10,11 @@ from slowapi.middleware import SlowAPIMiddleware
 from apex_server.deps import AppState, build_default_app_state
 from apex_server.routes.auth_routes import limiter as auth_limiter
 from apex_server.routes.auth_routes import router as auth_router
+from apex_server.routes.artifacts_routes import router as artifacts_router
+from apex_server.routes.events_routes import router as events_router
 from apex_server.routes.sessions_routes import router as sessions_router
 from apex_server.routes.skills_routes import router as skills_router
+from apex_server.routes.turns_routes import router as turns_router
 
 
 def create_app(state: AppState | None = None) -> FastAPI:
@@ -49,6 +52,9 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(sessions_router)
+    app.include_router(turns_router)
+    app.include_router(events_router)
+    app.include_router(artifacts_router)
     app.include_router(skills_router)
 
     @app.get("/health", tags=["meta"])
@@ -62,4 +68,3 @@ def create_app(state: AppState | None = None) -> FastAPI:
 # via `create_app` using `--factory`, so the default SQLite connection is
 # only opened when a real server starts — not during pytest collection or
 # `python -c "import apex_server.app"`.
-

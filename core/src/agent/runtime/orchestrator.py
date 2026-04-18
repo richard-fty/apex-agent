@@ -1,12 +1,17 @@
-"""Session orchestration above the managed runtime."""
+"""Session orchestration above the managed runtime.
+
+The orchestrator owns RuntimeGuard creation (limits live above the harness),
+session lifecycle queries, and delegates recovery to ``wake()`` so there is
+exactly one code path that rebuilds a harness from the event log.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
-from agent.core.models import AgentState, PendingApproval
 from agent.runtime.managed_runtime import ManagedAgentRuntime, ManagedEvent
+from agent.runtime.wake import wake
 from agent.session.archive import SessionArchive
 from agent.runtime.guards import RuntimeConfig, RuntimeGuard
 from agent.runtime.sandbox import BaseSandbox
@@ -22,7 +27,8 @@ class SessionOrchestrator:
     """Control-plane for creating, replaying, and resuming sessions.
 
     The orchestrator owns RuntimeGuard creation so limit enforcement sits
-    above the harness rather than inside it (Gap 8).
+    above the harness rather than inside it (Gap 8). Recovery/resume always
+    delegates to ``wake()`` so there is a single reconstruction path.
     """
 
     def __init__(
@@ -90,56 +96,17 @@ class SessionOrchestrator:
         cost_tracker: Any | None = None,
         sandbox: BaseSandbox | None = None,
     ) -> SessionHandle:
-        events = self.replay_events(session_id)
-        record = self.load_session(session_id)
-        if record is None:
-            raise ValueError(f"Unknown session: {session_id}")
+        """Resume a session by delegating to ``wake()``.
 
-        metadata = record.get("metadata", {}) or {}
-        session_metadata = metadata.get("session_metadata", {})
-        runtime_state = metadata.get("runtime_state", {})
-
-        runtime = ManagedAgentRuntime(
-            session_engine=session_engine,
-            model=model,
+        The orchestrator provides the archive and the caller provides a fresh
+        session engine; ``wake`` reconstructs messages, skills, and pending
+        approvals from the durable event log.
+        """
+        runtime = wake(
+            self.archive,
+            session_id,
             runtime_config=runtime_config,
             access_controller=access_controller,
             cost_tracker=cost_tracker,
-            archive=self.archive,
-            session_id=session_id,
-            sandbox=sandbox,
         )
-        runtime.session.events = list(events)
-        runtime.session.state = AgentState(record.get("state", "idle"))
-        runtime.session.stop_reason = record.get("stop_reason")
-        runtime.session.metadata = dict(session_metadata or record.get("metadata", {}))
-        runtime.session.step = int(runtime_state.get("step", sum(1 for event in events if event.get("type") == "tool_finished")))
-        runtime.session.current_user_input = runtime_state.get("current_user_input")
-        runtime.session.metadata["cancel_requested"] = bool(runtime_state.get("cancel_requested", False))
-        pending_snapshot = runtime_state.get("pending_approval")
-        if pending_snapshot is not None:
-            runtime.session.pending_approval = PendingApproval.model_validate(pending_snapshot)
-            if access_controller is not None and hasattr(access_controller, "pending"):
-                access_controller.pending = runtime.session.pending_approval
-        self._rehydrate_session_engine(session_engine, runtime.session.events)
         return SessionHandle(session_id=session_id, runtime=runtime)
-
-    def _rehydrate_session_engine(self, session_engine: Any, events: list[dict[str, Any]]) -> None:
-        for event in events:
-            payload = event.get("payload", {})
-            if event.get("type") == "user_message_added":
-                message = payload.get("message", {})
-                if message.get("content"):
-                    session_engine.add_user_message(message["content"])
-            elif event.get("type") == "assistant_message_added":
-                message = payload.get("message")
-                if message:
-                    session_engine.add_assistant_message(message)
-            elif event.get("type") == "tool_message_added":
-                message = payload.get("message", {})
-                if message:
-                    session_engine.add_tool_message(
-                        message.get("tool_call_id", "restored"),
-                        message.get("name", "tool"),
-                        message.get("content", ""),
-                    )

@@ -8,12 +8,13 @@ runtime flow tests (M2/M3); here we exercise the HTTP surface.
 from __future__ import annotations
 
 from pathlib import Path
-
 import pytest
 from fastapi.testclient import TestClient
 
 from apex_server.app import create_app
 from apex_server.deps import build_default_app_state
+from apex_server.routes.events_routes import load_replay_events
+from agent.session.store import SessionSpec
 
 
 def _app(tmp_path: Path) -> TestClient:
@@ -23,8 +24,6 @@ def _app(tmp_path: Path) -> TestClient:
     )
     app = create_app(state=state)
     return TestClient(app)
-
-
 class TestAuthFlow:
     def test_register_issues_session_cookie_and_logs_in(self, tmp_path):
         client = _app(tmp_path)
@@ -112,3 +111,45 @@ class TestHealthEndpoint:
         r = client.get("/health")
         assert r.status_code == 200
         assert r.json() == {"status": "ok"}
+
+
+class TestEventStreamReplay:
+    def _login(self, client, username="alice"):
+        client.post("/auth/register", json={"username": username, "password": "secret12"}).raise_for_status()
+
+    @pytest.mark.asyncio
+    async def test_load_replay_events_returns_persisted_typed_events(self, tmp_path):
+        client = _app(tmp_path)
+        state = client.app.state.app_state
+        session = await state.session_store.create(
+            SessionSpec(model="m", owner_user_id="alice")
+        )
+
+        state.archive.emit_event(session.id, "assistant_token", {"text": "hello"})
+        state.archive.emit_event(
+            session.id, "stream_end", {"final_state": "completed", "reason": None}
+        )
+
+        events = await load_replay_events(state, session.id, since_seq=0)
+        assert [e.type for e in events] == ["assistant_token", "stream_end"]
+        assert events[0].seq == 1
+        assert events[1].seq == 2
+
+    @pytest.mark.asyncio
+    async def test_load_replay_events_respects_since_seq(self, tmp_path):
+        client = _app(tmp_path)
+        state = client.app.state.app_state
+        session = await state.session_store.create(
+            SessionSpec(model="m", owner_user_id="alice")
+        )
+
+        seq1 = state.archive.emit_event(session.id, "assistant_token", {"text": "first"})
+        seq2 = state.archive.emit_event(session.id, "assistant_token", {"text": "second"})
+        seq3 = state.archive.emit_event(
+            session.id, "stream_end", {"final_state": "completed", "reason": None}
+        )
+        assert [seq1, seq2, seq3] == [1, 2, 3]
+
+        events = await load_replay_events(state, session.id, since_seq=1)
+        assert [e.seq for e in events] == [2, 3]
+        assert getattr(events[0], "text", None) == "second"
