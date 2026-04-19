@@ -113,13 +113,28 @@ def compare_results(results: list[dict[str, Any]]) -> list[str]:
 
 
 def load_baseline(path: str | Path) -> list[dict[str, Any]]:
-    return json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text())
+    # Handle both old format (list) and new format (dict with "results" key)
+    if isinstance(data, dict):
+        return data.get("results", [])
+    return data
 
 
-def save_baseline(results: list[dict[str, Any]], path: str | Path) -> Path:
+def save_baseline(results: list[dict[str, Any]], path: str | Path, scenario: str = "unknown", model: str = "unknown", strategy: str = "unknown") -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(results, indent=2, default=str))
+    from datetime import datetime
+    data = {
+        "scenario": scenario,
+        "model": model,
+        "strategy": strategy,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "results": results,
+        "aggregate": {
+            "num_cases": len(results),
+        }
+    }
+    target.write_text(json.dumps(data, indent=2, default=str))
     return target
 
 

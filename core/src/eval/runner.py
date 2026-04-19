@@ -526,7 +526,13 @@ async def main() -> None:
         for line in format_regression_gate(gate):
             console.print(line)
         if args.update_baseline:
-            baseline_path = save_baseline(results, args.baseline)
+            baseline_path = save_baseline(
+                results, 
+                args.baseline,
+                scenario=scenario.name,
+                model=models[0] if models else "unknown",
+                strategy=strategies[0] if strategies else "unknown"
+            )
             console.print(f"[dim]Baseline updated at {baseline_path}[/dim]")
         elif not gate["passed"]:
             raise SystemExit(1)
