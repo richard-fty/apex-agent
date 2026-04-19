@@ -62,10 +62,12 @@ async def run_single(
     test_case: dict[str, Any],
     strategy: str,
     timeout: int = 300,
+    use_mock: bool = False,
 ) -> dict[str, Any]:
     """Run a single model x test_case x strategy combination.
     
     Supports LT1 tier: kill at midpoint and wake() for continuation.
+    Supports mock mode for CI testing without API costs.
     """
     from agent.runtime.managed_runtime import ManagedAgentRuntime
     from agent.runtime.wake import wake
@@ -80,7 +82,11 @@ async def run_single(
     tier = test_case.get("tier")
     if tier == "LT1":
         # LT1: Run until midpoint, kill, wake(), continue without duplicate work
-        return await _run_lt1(scenario, model, test_case, strategy, runtime)
+        return await _run_lt1(scenario, model, test_case, strategy, runtime, use_mock=use_mock)
+
+    if use_mock:
+        # Mock mode: use deterministic responses without real API calls
+        return await _run_mock(scenario, model, test_case, strategy, runtime)
 
     trace = await run_agent(
         user_input=test_case["input"],
@@ -101,19 +107,113 @@ async def run_single(
     return score
 
 
-async def _run_lt1(
+async def _run_mock(
     scenario: Any,
     model: str,
     test_case: dict[str, Any],
     strategy: str,
     runtime: RuntimeConfig,
 ) -> dict[str, Any]:
+    """Run a test case with mock LLM and mock tool responses (no API calls)."""
+    from agent.session.engine import SessionEngine
+    from agent.session.archive import SessionArchive
+    from agent.runtime.orchestrator import SessionOrchestrator
+    from agent.runtime.guards import RuntimeGuard
+    from agent.runtime.trace import Trace
+    from eval.mock_brain import MockBrain, inject_mock_brain
+    from eval.mock_mode import MockToolRegistry
+    
+    console.print("  [dim]MOCK MODE: Using deterministic responses[/dim]")
+    
+    # Create archive and session
+    archive = SessionArchive()
+    session = SessionEngine(model=model, context_strategy=strategy)
+    
+    # Set up mock tool registry
+    mock_registry = MockToolRegistry()
+    from eval.mock_brain import MOCK_TOOL_RESPONSES
+    for tool_name, response in MOCK_TOOL_RESPONSES.items():
+        mock_registry.mock_static(tool_name, response)
+    
+    # Override session's dispatch with mock responses
+    original_execute = session.dispatch.execute
+    async def mock_execute(tool_call):
+        from eval.mock_brain import get_mock_tool_response
+        from agent.core.models import ToolResult
+        import time
+        
+        tool_start = time.time()
+        response = get_mock_tool_response(tool_call.name, tool_call.arguments)
+        tool_ms = (time.time() - tool_start) * 1000
+        
+        return ToolResult(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            content=response,
+            success=True,
+            summary=response[:240],
+        )
+    
+    # Inject mock execution
+    session.dispatch.execute = mock_execute
+    
+    # Create orchestrator and runtime
+    orchestrator = SessionOrchestrator(archive=archive)
+    handle = orchestrator.create_runtime(
+        session_engine=session,
+        model=model,
+        runtime_config=runtime,
+    )
+    
+    # Inject mock brain
+    inject_mock_brain(handle.runtime, test_case)
+    
+    # Create trace
+    trace = Trace(
+        run_id=f"mock_{test_case.get('id', 'unknown')}",
+        model=model,
+        scenario=scenario.name,
+        prompt=test_case["input"],
+        context_strategy=strategy,
+    )
+    
+    # Run to completion
+    guard = RuntimeGuard(runtime)
+    await handle.runtime.run_to_completion(
+        user_input=test_case["input"],
+        guard=guard,
+        trace=trace,
+        callback=lambda e: None,
+    )
+    
+    # Evaluate
+    score = scenario.evaluate(trace, test_case)
+    score["model"] = model
+    score["context_strategy"] = strategy
+    score["scenario"] = scenario.name
+    score["mock_mode"] = True
+    
+    # Save trace
+    trace.save("results")
+    
+    return score
+
+
+async def _run_lt1(
+    scenario: Any,
+    model: str,
+    test_case: dict[str, Any],
+    strategy: str,
+    runtime: RuntimeConfig,
+    use_mock: bool = False,
+) -> dict[str, Any]:
     """LT1 tier: checkpoint at midpoint, wake(), continue without duplicate work."""
     import tempfile
     from agent.runtime.loop import create_session
     from agent.runtime.guards import RuntimeGuard
     
-    console.print("  [dim]LT1: Running with checkpoint/resume...[/dim]")
+    mode_str = "MOCK " if use_mock else ""
+    console.print(f"  [dim]LT1: {mode_str}Running with checkpoint/resume...[/dim]")
     
     # Create a temporary archive for this LT1 run
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -127,6 +227,30 @@ async def _run_lt1(
             runtime_config=runtime,
             archive=archive,
         )
+        
+        # Inject mock components if in mock mode
+        if use_mock:
+            from eval.mock_brain import inject_mock_brain, get_mock_tool_response
+            from agent.core.models import ToolResult
+            import time
+            
+            # Inject mock brain
+            inject_mock_brain(rt, test_case)
+            
+            # Set up mock tool execution
+            original_execute = rt.session_engine.dispatch.execute
+            async def mock_lt1_execute(tool_call):
+                tool_start = time.time()
+                response = get_mock_tool_response(tool_call.name, tool_call.arguments)
+                tool_ms = (time.time() - tool_start) * 1000
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    name=tool_call.name,
+                    content=response,
+                    success=True,
+                    summary=response[:240],
+                )
+            rt.session_engine.dispatch.execute = mock_lt1_execute
         
         max_steps = test_case.get("max_steps", 20)
         kill_step = max_steps // 2  # Kill at midpoint
@@ -157,6 +281,29 @@ async def _run_lt1(
         
         # Simulate crash and wake
         rt2 = wake(archive, session_id, runtime_config=runtime)
+        
+        # Inject mock components into woken runtime if in mock mode
+        if use_mock:
+            from eval.mock_brain import inject_mock_brain, get_mock_tool_response
+            from agent.core.models import ToolResult
+            import time
+            
+            # Inject mock brain with continuation behavior
+            inject_mock_brain(rt2, test_case)
+            
+            # Set up mock tool execution for continuation
+            async def mock_lt2_execute(tool_call):
+                tool_start = time.time()
+                response = get_mock_tool_response(tool_call.name, tool_call.arguments)
+                tool_ms = (time.time() - tool_start) * 1000
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    name=tool_call.name,
+                    content=response,
+                    success=True,
+                    summary=response[:240],
+                )
+            rt2.session_engine.dispatch.execute = mock_lt2_execute
         
         # Continue from where we left off
         events_after = []
@@ -216,6 +363,7 @@ async def run_benchmark(
     test_cases: list[dict[str, Any]],
     strategies: list[str],
     timeout: int = 300,
+    use_mock: bool = False,
 ) -> list[dict[str, Any]]:
     """Run the full benchmark matrix."""
     total = len(models) * len(test_cases) * len(strategies)
@@ -245,7 +393,7 @@ async def run_benchmark(
 
                 start = time.time()
                 try:
-                    score = await run_single(scenario, model, case, strategy, timeout)
+                    score = await run_single(scenario, model, case, strategy, timeout, use_mock=use_mock)
                     elapsed = time.time() - start
 
                     # Print quick result
@@ -337,7 +485,16 @@ async def main() -> None:
         "--update-baseline", action="store_true",
         help="Write the current results to --baseline after the run completes",
     )
+    parser.add_argument(
+        "--mock", action="store_true",
+        help="Use mock LLM and tool responses (no API calls, for CI testing)",
+    )
     args = parser.parse_args()
+    
+    # Check for mock mode via environment variable or CLI flag
+    use_mock = args.mock or os.environ.get("APEX_MOCK_LLM", "").lower() in ("1", "true", "yes")
+    if use_mock:
+        console.print("[bold yellow]MOCK MODE: Using deterministic responses (no API calls)[/bold yellow]")
 
     models = [m.strip() for m in args.models.split(",")]
     strategies = [s.strip() for s in args.strategies.split(",")]
@@ -349,7 +506,7 @@ async def main() -> None:
         return
 
     # Run benchmark
-    results = await run_benchmark(scenario, models, test_cases, strategies, args.timeout)
+    results = await run_benchmark(scenario, models, test_cases, strategies, args.timeout, use_mock=use_mock)
 
     # Print results table
     console.print()
