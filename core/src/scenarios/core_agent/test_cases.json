@@ -324,5 +324,17 @@
     "expects_recovery": true,
     "max_steps": 8,
     "description": "LT2 + recovery: the recovery path itself must be legible — a reader must be able to see why the agent switched approaches."
+  },
+  {
+    "id": "lt1_checkpoint_resume_multi_file",
+    "ability": "goal_retention",
+    "difficulty": "hard",
+    "tier": "LT1",
+    "input": "Read tests/fixtures/core_agent/mission.txt, tests/fixtures/core_agent/notes.txt, and tests/fixtures/core_agent/summary.txt, then report the project codename, team size, and launch date.",
+    "expected_tools": ["read_file"],
+    "forbidden_tools": ["write_file"],
+    "must_contain": ["Northstar", "5", "2026-09-01"],
+    "max_steps": 10,
+    "description": "LT1 checkpoint/resume: kill at midpoint, wake(), continue without re-reading already-read files. Proves stateful session recovery."
   }
 ]

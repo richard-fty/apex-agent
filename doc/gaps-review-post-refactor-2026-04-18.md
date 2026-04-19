@@ -14,7 +14,7 @@ completion without reading implementation code.
 
 | # | Gap | What Closed It |
 |---|---|---|
-| 1 | CI uses `pip install -r requirements.txt` (doesn't exist) | ✅ CI now uses `uv sync --extra dev`; no `requirements.txt` needed. |
+| 1 | CI uses `pip install -r requirements.txt` (doesn't exist) | ✅ CI now uses `uv sync --all-packages --dev`; rag-service as submodule. Tests pass in CI. |
 | 2 | `SessionStore` described as "deprecated legacy" but still present | ✅ Refactored into typed `Protocol` + `SqliteSessionStore` wrapper over the archive. Design-spec §8 updated. |
 | 3 | Duplicate recovery logic in `orchestrator.resume_runtime` vs `wake()` | ✅ `resume_runtime` now delegates to `wake()`. Single reconstruction path. |
 | 4 | Route module too broad — `sessions_routes.py` mixed CRUD, turns, SSE, artifacts | ✅ Split into `sessions_routes`, `turns_routes`, `events_routes`, `artifacts_routes`, `auth_routes`, `skills_routes`. |
@@ -22,6 +22,8 @@ completion without reading implementation code.
 | 6 | `token_tracker.py` and `cost_tracker.py` as separate files | ✅ Consolidated into `core/src/agent/runtime/tracking.py`. Old files preserved as backward-compatible re-exports. |
 | 7 | `StreamEnd` semantics undocumented — SSE closes or turn boundary? | ✅ Documented in `events_routes.py` docstring and `web-platform-plan.md` §7.1: `StreamEnd` = turn boundary; SSE re-subscribes. |
 | 8 | `SessionOut` typo (`context` → `context_strategy`) in `owned_session` | ✅ Fixed. |
+| 9 | **E1: T1.3 mid-run kill test** — Test only verified reconstruction, not continuation | ✅ `test_t1_11_mid_run_kill_and_continue` added. Simulates crash after tool_a, wake(), asserts tool_b continues without re-executing tool_a. |
+| 10 | **E4: LT1 runner hook** — `tier: LT1` was descriptive only | ✅ `_run_lt1()` implemented in `eval/runner.py`. Detects LT1 tier, kills at midpoint, wake(), continues, verifies no duplicate tool calls. Test case `lt1_checkpoint_resume_multi_file` added. |
 
 ---
 
@@ -113,23 +115,22 @@ Of these, `cost_tracker.py` and `token_tracker.py` are now one-line re-exports, 
 
 ## Still Open — Eval-Suite Alignment
 
-### E1. T1.3 — crash recovery test does not simulate a mid-run kill boundary
+### ✅ E1. T1.3 — crash recovery test does not simulate a mid-run kill boundary — CLOSED
 
 **Eval suite:** "Kill the harness mid-run (after at least one tool call). Call `wake(session_id)` with a fresh harness instance. The run continues from the last emitted event without repeating completed tool calls."
 
-**Current state:** T1.3 now checks `tool_call_id` matching — it proves every
-completed tool call has a corresponding tool message in the rehydrated history.
-What it *doesn't* do is simulate an actual mid-run kill (e.g. `asyncio.cancel()`
-or_SIGTERM) and then prove a *continuation* run doesn't re-execute already-completed
-calls.  The test creates a completed session and verifies wake reconstruction,
-which is close but not the exact "kill + resume" scenario from the eval suite.
+**Closed by:** `test_t1_11_mid_run_kill_and_continue` in `core/tests/test_t1_managed_agent_properties.py`.
 
-**What "done" looks like:**
-- A test that starts a multi-step run, cancels it after the first tool call
-  completes, then calls `wake()` + `resume_pending()` or `start_turn()` and
-  asserts the second turn does not re-invoke the first tool.
+The test:
+1. Starts a multi-step run with tool_a and tool_b
+2. Runs until after tool_a completes (simulating crash after first tool)
+3. Calls `wake()` to reconstruct the session
+4. Continues the run with `start_turn()`
+5. Asserts tool_a is NOT called again (no duplicate)
+6. Asserts tool_b IS called (continuation works)
+7. Asserts session completes successfully
 
-**Priority:** High — this is a core claim of the managed-agent architecture.
+**Verification:** `uv run pytest core/tests/test_t1_managed_agent_properties.py::test_t1_11_mid_run_kill_and_continue -v` passes.
 
 ---
 
@@ -167,23 +168,33 @@ inspection, but not a live container).
 
 ---
 
-### E4. T2 — LT1 / LT2 / LT3 runner hooks are descriptive, not enforced
+### E4. T2 — LT1 / LT2 / LT3 runner hooks (Partial)
 
 **Eval suite:** §T2 long-task additions define LT1 (checkpoint/resume at
 step 25), LT2 (trace legibility scored by human), LT3 (cancel at 70% yields
-partial-progress value).  The `tier` field on scenario test cases is metadata
-only; the eval runner does not enforce kill/resume or cancel behaviour.
+partial-progress value).
 
-**Current state:** The test_cases.json files carry `tier: LT1` / `tier: LT3`
-markers but the evaluators and runner treat them as descriptive labels, not
-as test behaviour triggers.
+#### ✅ LT1 — IMPLEMENTED
 
-**What "done" looks like:**
-- `eval/runner.py` detects `LT1` tier and injects a `cancel` at the midpoint, then calls `wake()` for continuation.
-- `eval/runner.py` detects `LT3` tier and cancels at 70% completion, then scores partial artifacts.
-- LT2 (human-rated trace legibility) is documented as out of scope for automated CI and requires a manual review process.
+**Closed by:** `_run_lt1()` function in `core/src/eval/runner.py`.
 
-**Priority:** High for LT1 (it's a core managed-agent claim); Medium for LT3; Low for LT2 (manual by design).
+The runner now:
+1. Detects `tier: LT1` in test cases
+2. Runs until midpoint (max_steps // 2)
+3. Persists session state to archive
+4. Calls `wake()` to reconstruct the session
+5. Continues with `start_turn("continue")`
+6. Verifies no duplicate tool calls occur
+7. Reports `lt1_success` metric in results
+
+**Test case added:** `lt1_checkpoint_resume_multi_file` in `core_agent/test_cases.json`.
+
+#### ⏳ LT2 / LT3 — NOT IMPLEMENTED
+
+- **LT2 (trace legibility):** Requires human rating (1–5 scale). Documented as manual-only, out of scope for automated CI.
+- **LT3 (cancel at 70% + partial value):** Not yet implemented. Would need cancel-at-percentage logic + partial artifact scoring.
+
+**Priority:** LT1 is High and ✅ done; LT3 is Medium; LT2 is Low (manual by design).
 
 ---
 

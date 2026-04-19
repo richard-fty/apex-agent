@@ -63,11 +63,24 @@ async def run_single(
     strategy: str,
     timeout: int = 300,
 ) -> dict[str, Any]:
-    """Run a single model x test_case x strategy combination."""
+    """Run a single model x test_case x strategy combination.
+    
+    Supports LT1 tier: kill at midpoint and wake() for continuation.
+    """
+    from agent.runtime.managed_runtime import ManagedAgentRuntime
+    from agent.runtime.wake import wake
+    from agent.session.archive import SessionArchive
+    
     runtime = RuntimeConfig(
         max_steps=test_case.get("max_steps", 20),
         timeout_seconds=timeout,
     )
+    
+    # Check for LT1 tier (long-task checkpoint/resume)
+    tier = test_case.get("tier")
+    if tier == "LT1":
+        # LT1: Run until midpoint, kill, wake(), continue without duplicate work
+        return await _run_lt1(scenario, model, test_case, strategy, runtime)
 
     trace = await run_agent(
         user_input=test_case["input"],
@@ -86,6 +99,115 @@ async def run_single(
     trace.save("results")
 
     return score
+
+
+async def _run_lt1(
+    scenario: Any,
+    model: str,
+    test_case: dict[str, Any],
+    strategy: str,
+    runtime: RuntimeConfig,
+) -> dict[str, Any]:
+    """LT1 tier: checkpoint at midpoint, wake(), continue without duplicate work."""
+    import tempfile
+    from agent.runtime.loop import create_session
+    from agent.runtime.guards import RuntimeGuard
+    
+    console.print("  [dim]LT1: Running with checkpoint/resume...[/dim]")
+    
+    # Create a temporary archive for this LT1 run
+    with tempfile.TemporaryDirectory() as tmpdir:
+        archive = SessionArchive(db_path=f"{tmpdir}/lt1_archive.db")
+        
+        # Create initial runtime with archive
+        rt = create_session(
+            user_input=test_case["input"],
+            model=model,
+            context_strategy=strategy,
+            runtime_config=runtime,
+            archive=archive,
+        )
+        
+        max_steps = test_case.get("max_steps", 20)
+        kill_step = max_steps // 2  # Kill at midpoint
+        
+        # Run until kill_step
+        step_count = 0
+        events_before = []
+        
+        async for event in rt.start_turn(test_case["input"], guard=RuntimeGuard(runtime)):
+            events_before.append(event)
+            if event.type == "step":
+                step_count = event.data.get("step", 0)
+                if step_count >= kill_step:
+                    console.print(f"  [dim]LT1: Killing at step {step_count}...[/dim]")
+                    break
+        
+        # Persist state
+        rt._persist_session()
+        session_id = rt.session.session_id
+        
+        # Get tool calls before wake
+        events_before_wake = archive.get_events(session_id)
+        tool_calls_before = [
+            e for e in events_before_wake 
+            if e.get("type") == "tool_finished"
+        ]
+        console.print(f"  [dim]LT1: {len(tool_calls_before)} tool calls before wake[/dim]")
+        
+        # Simulate crash and wake
+        rt2 = wake(archive, session_id, runtime_config=runtime)
+        
+        # Continue from where we left off
+        events_after = []
+        async for event in rt2.start_turn("continue", guard=RuntimeGuard(runtime)):
+            events_after.append(event)
+        
+        # Get final tool calls
+        events_after_wake = archive.get_events(session_id)
+        tool_calls_after = [
+            e for e in events_after_wake 
+            if e.get("type") == "tool_finished"
+        ]
+        
+        # Verify no duplicate tool calls
+        unique_tools = set()
+        duplicates = []
+        for tc in tool_calls_after:
+            tool_name = tc.get("payload", {}).get("tool_name")
+            if tool_name in unique_tools:
+                duplicates.append(tool_name)
+            unique_tools.add(tool_name)
+        
+        # Build trace from final state
+        from agent.runtime.trace import Trace
+        trace = Trace(
+            test_case_id=test_case.get("id", "lt1"),
+            model=model,
+            context_strategy=strategy,
+        )
+        trace.events = events_after_wake
+        trace.outcome = rt2.session.state.value
+        trace.step_count = len([e for e in events_after_wake if e.get("type") == "step"])
+        
+        # Evaluate
+        score = scenario.evaluate(trace, test_case)
+        score["model"] = model
+        score["context_strategy"] = strategy
+        score["scenario"] = scenario.name
+        score["lt1_checkpoint_step"] = kill_step
+        score["lt1_tool_calls_before_wake"] = len(tool_calls_before)
+        score["lt1_tool_calls_total"] = len(tool_calls_after)
+        score["lt1_duplicate_calls"] = len(duplicates)
+        score["lt1_success"] = len(duplicates) == 0 and rt2.session.state.value == "completed"
+        
+        if duplicates:
+            console.print(f"  [bold red]LT1 FAILED: Duplicate tool calls: {duplicates}[/bold red]")
+        else:
+            console.print(f"  [dim]LT1: Success - {len(tool_calls_after)} total tool calls, no duplicates[/dim]")
+        
+        trace.save("results")
+        return score
 
 
 async def run_benchmark(

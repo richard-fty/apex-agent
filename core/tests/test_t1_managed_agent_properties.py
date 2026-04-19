@@ -84,6 +84,12 @@ class FakeDispatch:
     def __init__(self) -> None:
         self.tool_names = ["write_file"]
         self._executed: list[str] = []
+        self._handlers: dict[str, Any] = {}
+
+    def register(self, tool_def: Any, handler: Any = None) -> None:
+        """Register a tool handler (matches ToolDispatch.register signature)."""
+        name = tool_def.name if hasattr(tool_def, 'name') else tool_def
+        self._handlers[name] = handler
 
     def parse_tool_calls(self, raw: list[dict]) -> list[Any]:
         return [ToolCall(id=r["id"], name=r["function"]["name"], arguments={}) for r in raw]
@@ -97,6 +103,16 @@ class FakeDispatch:
 
     async def execute(self, tc: Any) -> Any:
         self._executed.append(tc.name)
+        # Use registered handler if available (match real ToolDispatch signature)
+        if tc.name in self._handlers:
+            handler = self._handlers[tc.name]
+            try:
+                result = handler(**(tc.arguments if hasattr(tc, 'arguments') else {}))
+                if hasattr(result, "__await__"):
+                    result = await result
+                return SimpleNamespace(content=str(result), success=True)
+            except Exception as e:
+                return SimpleNamespace(content=f"Error: {e}", success=False)
         return SimpleNamespace(content="ok", success=True)
 
     def retry_prompt(self, tc: Any, err: str) -> str:
@@ -907,3 +923,124 @@ def test_t1_10_orchestrator_resume_delegates_to_wake(tmp_path) -> None:
     # Both must have the same number of messages in the engine
     # (wake rebuilds from events; orchestrator delegates to wake)
     assert len(handle.runtime.session_engine.messages) == len(direct.session_engine.messages)
+
+
+# ---------------------------------------------------------------------------
+# T1.11 — mid_run_kill_and_continue
+# Kill the harness after first tool call, wake(), and continue without
+# re-executing the already-completed tool.
+# ---------------------------------------------------------------------------
+
+def test_t1_11_mid_run_kill_and_continue(tmp_path) -> None:
+    """Simulate a crash after step 1, wake(), and verify step 2 doesn't repeat step 1."""
+    db = str(tmp_path / "archive.db")
+    archive = SessionArchive(db_path=db)
+
+    tool_calls_made: list[str] = []
+
+    class CallTracker:
+        def __init__(self, lst: list, name: str):
+            self.lst = lst
+            self.name = name
+        def __call__(self, **kwargs) -> str:
+            self.lst.append(self.name)
+            return f"result_from_{self.name}"
+
+    def make_tool_call(name: str):
+        """Create a tool call that records when executed."""
+        return CallTracker(tool_calls_made, name)
+
+    # Create runtime with a 2-step brain (step 1: tool_a, step 2: tool_b)
+    # Note: tool_calls need 'index' attribute for the runtime's delta processing
+    brain = FakeBrain([
+        # Step 1: LLM calls tool_a
+        [_chunk(tool_calls=[SimpleNamespace(id="call_1", index=0, function=SimpleNamespace(name="tool_a", arguments='{}'))], usage=_usage())],
+        # Step 1 response: LLM sees tool result
+        [_chunk(content="ack", usage=_usage())],
+        # Step 2: LLM calls tool_b
+        [_chunk(tool_calls=[SimpleNamespace(id="call_2", index=0, function=SimpleNamespace(name="tool_b", arguments='{}'))], usage=_usage())],
+        # Step 2 response: done
+        [_chunk(content="done", usage=_usage())],
+    ])
+
+    rt = ManagedAgentRuntime(
+        session_engine=FakeEngine(),
+        model="fake",
+        runtime_config=RuntimeConfig(max_steps=5, timeout_seconds=30),
+        access_controller=AllowController(),
+        brain=brain,
+        archive=archive,
+    )
+
+    # Register tools that record their calls on the session engine's dispatch
+    from agent.core.models import ToolDef, ToolParameter
+    param = ToolParameter(name="input", type="string", description="input", required=False)
+    rt.session_engine.dispatch.register(
+        ToolDef(name="tool_a", description="tool a", parameters=[param]),
+        make_tool_call("tool_a")
+    )
+    rt.session_engine.dispatch.register(
+        ToolDef(name="tool_b", description="tool b", parameters=[param]),
+        make_tool_call("tool_b")
+    )
+
+    session_id = rt.session.session_id
+
+    async def run_until_first_tool():
+        """Run until after first tool call completes."""
+        async for ev in rt.start_turn("start task", guard=RuntimeGuard(rt.runtime_config)):
+            if ev.type == "tool_finished":
+                # Cancel immediately after first tool finishes
+                break
+
+    asyncio.run(run_until_first_tool())
+
+    # Verify step 1 executed
+    assert "tool_a" in tool_calls_made, "First tool should have been called"
+    assert tool_calls_made.count("tool_a") == 1, "tool_a should be called exactly once"
+
+    # Save state before "crash"
+    events_before_wake = archive.get_events(session_id)
+    tool_finished_events = [e for e in events_before_wake if e.get("type") == "tool_finished"]
+    assert len(tool_finished_events) >= 1, "Should have tool_finished event in archive"
+
+    # Simulate crash: create fresh runtime via wake
+    rt2 = wake(archive, session_id, runtime_config=RuntimeConfig(max_steps=5, timeout_seconds=30))
+
+    # Attach a fresh brain for the continuation (step 2: tool_b, then done)
+    rt2.brain = FakeBrain([
+        # Step 2: LLM calls tool_b
+        [_chunk(tool_calls=[SimpleNamespace(id="call_2", index=0, function=SimpleNamespace(name="tool_b", arguments='{}'))], usage=_usage())],
+        # Step 2 response: done
+        [_chunk(content="done", usage=_usage())],
+    ])
+
+    # Register same tools on new runtime's session engine
+    rt2.session_engine.dispatch.register(
+        ToolDef(name="tool_a", description="tool a", parameters=[param]),
+        make_tool_call("tool_a")
+    )
+    rt2.session_engine.dispatch.register(
+        ToolDef(name="tool_b", description="tool b", parameters=[param]),
+        make_tool_call("tool_b")
+    )
+
+    # Continue the run
+    async def continue_run():
+        events = []
+        async for ev in rt2.start_turn("continue", guard=RuntimeGuard(rt2.runtime_config)):
+            events.append(ev.type)
+        return events
+
+    events = asyncio.run(continue_run())
+
+    # Get rt2 events for verification
+    events_after_wake = archive.get_events(session_id)
+    new_events = events_after_wake[len(events_before_wake):]
+
+    # Critical assertion: tool_a should NOT be called again
+    assert tool_calls_made.count("tool_a") == 1, "tool_a should NOT be re-executed after wake"
+    # tool_b should be called (step 2)
+    assert "tool_b" in tool_calls_made, "tool_b should be called in continuation"
+    # Should complete successfully
+    assert rt2.session.state == AgentState.COMPLETED

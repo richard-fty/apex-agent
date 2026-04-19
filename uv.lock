@@ -218,7 +218,7 @@ requires-dist = [
     { name = "plotext", specifier = ">=5.2.8" },
     { name = "pydantic", specifier = ">=2.6.0" },
     { name = "pydantic-settings", specifier = ">=2.2.0" },
-    { name = "rag-service", directory = "../rag-service" },
+    { name = "rag-service", directory = "rag-service" },
     { name = "yfinance", specifier = ">=0.2.36" },
 ]
 
@@ -2371,7 +2371,7 @@ wheels = [
 [[package]]
 name = "rag-service"
 version = "0.1.0"
-source = { directory = "../rag-service" }
+source = { directory = "rag-service" }
 dependencies = [
     { name = "httpx" },
     { name = "numpy" },
