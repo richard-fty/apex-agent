@@ -10,10 +10,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from apex_server.deps import AppState, User
-
+from config import settings
 
 class SessionCreateIn(BaseModel):
-    model: str = "deepseek/deepseek-chat"
+    model: str = settings.default_model or "deepseek/deepseek-chat"
     context_strategy: str = "truncate"
 
 

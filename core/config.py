@@ -34,7 +34,11 @@ MODEL_CONTEXT_WINDOWS: dict[str, ModelConfig] = {
     # DeepSeek
     "deepseek/deepseek-chat": ModelConfig(max_tokens=64_000, reserved_for_output=4096),
     "deepseek/deepseek-reasoner": ModelConfig(max_tokens=64_000, reserved_for_output=4096),
+    # Moonshot
+    "moonshot/kimi-k2": ModelConfig(max_tokens=128_000, reserved_for_output=8192),
+    "moonshot/kimi-k1.5": ModelConfig(max_tokens=128_000, reserved_for_output=8192),
 }
+
 
 MODEL_PROVIDER_ENV: dict[str, str] = {
     "anthropic/claude-sonnet-4-20250514": "ANTHROPIC_API_KEY",
@@ -46,17 +50,18 @@ MODEL_PROVIDER_ENV: dict[str, str] = {
     "gemini/gemini-1.5-flash": "GOOGLE_API_KEY",
     "deepseek/deepseek-chat": "DEEPSEEK_API_KEY",
     "deepseek/deepseek-reasoner": "DEEPSEEK_API_KEY",
+    "moonshot/kimi-k2": "MOONSHOT_API_KEY",
+    "moonshot/kimi-k1.5": "MOONSHOT_API_KEY",
 }
 
 
-def get_model_config(model: str) -> ModelConfig:
-    """Get context window config for a model, falling back to defaults."""
-    return MODEL_CONTEXT_WINDOWS.get(model, ModelConfig())
-
-
-def get_model_provider_env(model: str) -> str | None:
-    """Return the required API key env var for a model, if known."""
-    return MODEL_PROVIDER_ENV.get(model)
+# Dynamic default model mapping from LLM_PROVIDER
+_DEFAULT_MODELS: dict[str, str] = {
+    "deepseek": "deepseek/deepseek-chat",
+    "openai": "gpt-4o",
+    "anthropic": "anthropic/claude-sonnet-4-20250514",
+    "google": "gemini/gemini-1.5-pro",
+}
 
 
 class Settings(BaseSettings):
@@ -64,15 +69,19 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
+    # LLM provider selection (auto-configures default model)
+    llm_provider: str = Field(default="deepseek", alias="LLM_PROVIDER")
+
     # API keys
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    moonshot_api_key: str = Field(default="", alias="MOONSHOT_API_KEY")
     hf_token: str = Field(default="", alias="HF_TOKEN")
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
 
-    # Embedding / reranking provider: "siliconflow" or "huggingface"
+    # Embedding / reranking provider: "siliconflow" (default, free) or "huggingface"
     embedding_provider: str = Field(default="siliconflow", alias="EMBEDDING_PROVIDER")
 
     # SiliconFlow settings (preferred — no cold start, free bge-m3)
@@ -106,7 +115,7 @@ class Settings(BaseSettings):
     rag_rerank_max_candidates: int = Field(default=100, alias="RAG_RERANK_MAX_CANDIDATES")
 
     # Default model for agent runs
-    default_model: str = Field(default="deepseek/deepseek-chat")
+    default_model: str = Field(default="", alias="DEFAULT_MODEL")
     response_language: str = Field(
         default="English",
         description="Default assistant response language, e.g. English or Chinese",
@@ -123,7 +132,7 @@ class Settings(BaseSettings):
     )
 
     # Compressor model (cheap/fast model for summarization)
-    compressor_model: str = Field(default="gpt-4o-mini")
+    compressor_model: str = Field(default="", alias="COMPRESSOR_MODEL")
 
     # Retrieval / knowledge base
     enable_rag: bool = Field(default=True, description="Enable retrieval and knowledge-base tools")
@@ -164,18 +173,29 @@ class Settings(BaseSettings):
     )
 
 
+# Initialize settings
 settings = Settings()
+
+
+# Auto-detect default model from LLM_PROVIDER if DEFAULT_MODEL is not set
+if not settings.default_model and settings.llm_provider in _DEFAULT_MODELS:
+    settings.default_model = _DEFAULT_MODELS[settings.llm_provider]
+
+# Auto-detect compressor model if not set (use same as default)
+if not settings.compressor_model:
+    settings.compressor_model = settings.default_model
 
 
 # Export provider keys loaded from .env into os.environ so third-party libraries
 # (litellm, huggingface_hub, tavily, etc.) can find them. pydantic-settings only
-# populates the Settings object; libraries read os.environ directly. Shell-exported
+# populates to Settings object; libraries read os.environ directly. Shell-exported
 # values win — we never overwrite an existing os.environ entry.
 _EXPORTED_ENV_KEYS = (
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
     "GOOGLE_API_KEY",
     "DEEPSEEK_API_KEY",
+    "MOONSHOT_API_KEY",
     "HF_TOKEN",
     "TAVILY_API_KEY",
     "SILICONFLOW_API_KEY",
@@ -200,3 +220,13 @@ def is_model_available(model: str) -> tuple[bool, str | None]:
 def list_known_models() -> list[str]:
     """Return known model ids in stable display order."""
     return list(MODEL_CONTEXT_WINDOWS.keys())
+
+
+def get_model_config(model: str) -> ModelConfig:
+    """Get context window config for a model, falling back to defaults."""
+    return MODEL_CONTEXT_WINDOWS.get(model, ModelConfig())
+
+
+def get_model_provider_env(model: str) -> str | None:
+    """Return the required API key env var for a model, if known."""
+    return MODEL_PROVIDER_ENV.get(model)
