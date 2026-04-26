@@ -12,7 +12,7 @@ Tools:
 from __future__ import annotations
 
 import json
-import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -227,10 +227,14 @@ async def generate_chart(
     symbol: str,
     period: str = "6mo",
     indicators: str = "sma_20,sma_50,volume",
+    output_path: str = "",
     chart_type: str = "candle",
 ) -> str:
     """Generate a candlestick chart with indicators. Saves as PNG."""
     try:
+        _configure_matplotlib_env()
+        import matplotlib
+        matplotlib.use("Agg")
         import yfinance as yf
         import mplfinance as mpf
     except ImportError:
@@ -264,12 +268,14 @@ async def generate_chart(
                 addplots.append(mpf.make_addplot(rsi, panel=2, ylabel="RSI", label="RSI(14)"))
             # volume is handled by mplfinance directly
 
-        # Ensure charts directory exists
-        charts_dir = Path("charts")
-        charts_dir.mkdir(exist_ok=True)
-
-        filename = f"{symbol}_{period}.png"
-        filepath = charts_dir / filename
+        if output_path:
+            filepath = Path(output_path)
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            charts_dir = Path("charts")
+            charts_dir.mkdir(exist_ok=True)
+            filename = f"{symbol}_{period}.png"
+            filepath = charts_dir / filename
 
         style = mpf.make_mpf_style(base_mpf_style="charles", rc={"font.size": 8})
         mpf.plot(
@@ -283,39 +289,24 @@ async def generate_chart(
             figsize=(12, 8),
         )
 
-        # Also generate terminal chart with plotext
-        terminal_chart = _plotext_chart(df, symbol, period)
-
         return json.dumps({
             "chart_saved": str(filepath),
             "symbol": symbol,
             "period": period,
             "indicators": indicator_list,
             "data_points": len(df),
-            "terminal_preview": terminal_chart,
         }, indent=2)
 
     except Exception as e:
         return json.dumps({"error": f"Failed to generate chart: {str(e)}"})
 
 
-def _plotext_chart(df, symbol: str, period: str) -> str:
-    """Generate a simple ASCII price chart for the terminal."""
-    try:
-        import plotext as plt
-
-        prices = df["Close"].tolist()
-        dates = list(range(len(prices)))
-
-        plt.clear_figure()
-        plt.plot(dates, prices)
-        plt.title(f"{symbol} Close Price ({period})")
-        plt.theme("dark")
-        plt.plot_size(60, 15)
-
-        return plt.build()
-    except Exception:
-        return "(terminal chart unavailable)"
+def _configure_matplotlib_env() -> None:
+    cache_dir = Path(tempfile.gettempdir()) / "apex_matplotlib"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    import os
+    os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
+    os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir))
 
 
 # ── run_backtest ──────────────────────────────────────────────────────

@@ -129,6 +129,38 @@ jobs:
             --mock \
             --baseline core/src/eval/baselines/core_agent.json
 
+  coding-eval-replay-gate:
+    name: Coding Eval Replay Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout apex-agent
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-packages --dev
+
+      - name: Build coding sandbox image
+        run: docker build -t apex-sandbox:latest -f core/sandbox/Dockerfile core/sandbox
+
+      - name: Run coding eval replay
+        env:
+          APEX_SANDBOX_IMAGE: apex-sandbox:latest
+        run: |
+          uv run python -m eval.runner \
+            --scenario coding \
+            --strategies truncate \
+            --replay all
+
   # ── Benchmark regression gate (real LLM) ────────────────────────────────────────────
   # Runs with real API calls - requires API keys and opt-in via repo variable
   benchmark-regression-gate:
@@ -165,7 +197,7 @@ jobs:
   # ── Release gate summary ─────────────────────────────────────────────────
   release-gate:
     name: Release Gate
-    needs: [t1-hard-gate, t3-regression-gate, unit-tests, benchmark-mock-gate, benchmark-regression-gate]
+    needs: [t1-hard-gate, t3-regression-gate, unit-tests, benchmark-mock-gate, coding-eval-replay-gate, benchmark-regression-gate]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -185,6 +217,10 @@ jobs:
           fi
           if [ "${{ needs.benchmark-mock-gate.result }}" != "success" ]; then
             echo "BLOCKED: Benchmark mock gate failed — eval pipeline broken"
+            exit 1
+          fi
+          if [ "${{ needs.coding-eval-replay-gate.result }}" != "success" ]; then
+            echo "BLOCKED: Coding eval replay gate failed — coding harness broken"
             exit 1
           fi
           # Real benchmark gate is opt-in via APEX_CI_RUN_BENCHMARK — skipped is OK,

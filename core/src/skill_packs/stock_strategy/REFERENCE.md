@@ -55,3 +55,85 @@
 - Hourly (1h interval): max 730 days
 - Daily (1d interval): unlimited history
 - Weekly/Monthly: unlimited history
+
+## Query Construction
+
+When using `web_research` for stocks, build queries around a specific knowledge gap.
+The backend may rewrite vague stock/company prompts into focused company-news subqueries and return them in `queries_used`.
+
+### Query Rules
+- Prefer the company name over the ticker when possible
+- Ask for what changed recently, not generic "stock analysis"
+- Keep one query focused on one topic
+- Use follow-up queries only to fill a missing area
+- Avoid broad finance filler like `financial performance` unless paired with a concrete event such as earnings or guidance
+- If the response includes `queries_used`, treat that as the actual query set that ran
+
+### Good Query Patterns
+- `<Company> earnings guidance analyst reaction April 2026`
+- `<Company> latest news AI strategy datacenter demand April 2026`
+- `<Company> SEC filing risks outlook 2026`
+- `<Company> antitrust lawsuit acquisition news 2026`
+- `<Company> analyst downgrade valuation concerns April 2026`
+
+### Weak Query Patterns
+- `<Ticker> stock analysis 2026`
+- `<Ticker> financial performance`
+- `<Ticker> recent information`
+- `<Ticker> news earnings financial performance 2026`
+
+### Knowledge Gap Checklist
+Use at most 3 web queries total and cover only the missing gaps:
+
+| Gap | Example Query |
+|---|---|
+| Earnings / Guidance | `Adobe earnings guidance analyst reaction April 2026` |
+| Business / Product Catalyst | `Adobe latest news Firefly AI enterprise demand April 2026` |
+| Risk / Regulation / Litigation | `Adobe lawsuit antitrust acquisition risk 2026` |
+| Analyst / Valuation Debate | `Adobe analyst downgrade valuation concerns April 2026` |
+
+## Briefing Outline
+
+Use this when the user asks for a written stock briefing. Treat it as content guidance only.
+Do not assume the final output format unless the user explicitly asks for one.
+
+```md
+# NVDA Equity Research Briefing
+
+## Executive Summary
+Two or three short paragraphs on the latest business update, valuation backdrop, and why the stock matters now.
+
+## Market Snapshot
+
+| Metric | Value | Takeaway |
+|---|---:|---|
+| Latest Close | $... | ... |
+| 6M Change | ...% | ... |
+| RSI(14) | ... | ... |
+| SMA(50) | $... | ... |
+| SMA(200) | $... | ... |
+
+## News & Catalysts
+
+| Source | Date | Key Point |
+|---|---|---|
+| [Headline 1](https://example.com/1) | 2026-04-20 | One sentence takeaway |
+| [Headline 2](https://example.com/2) | 2026-04-19 | One sentence takeaway |
+| [Headline 3](https://example.com/3) | 2026-04-18 | One sentence takeaway |
+
+## Risks
+
+| Risk | Why It Matters |
+|---|---|
+| Key risk 1 | ... |
+| Key risk 2 | ... |
+| Key risk 3 | ... |
+
+## Sources
+
+| Outlet | Link |
+|---|---|
+| Reuters | https://example.com/1 |
+| SEC | https://example.com/2 |
+| FT | https://example.com/3 |
+```

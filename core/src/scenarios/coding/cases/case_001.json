@@ -1,0 +1,19 @@
+{
+  "id": "vite_button_state_001",
+  "title": "Wire the selected filter button",
+  "tier": "C1",
+  "template": "vite-react",
+  "input": "Wire the Show selected button so it toggles the list between all items and selected items.",
+  "prompt": "Wire the Show selected button so it toggles the list between all items and selected items.",
+  "allowed_paths": ["src/**", "package.json"],
+  "playwright_spec": "cases/case_001/tests/button-state.spec.mjs",
+  "golden_patch": "cases/case_001/golden/patch.diff",
+  "max_steps": 30,
+  "manifest": {
+    "install": ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"],
+    "build": ["pnpm", "build"],
+    "test": ["pnpm", "exec", "playwright", "test", "cases/case_001/tests/button-state.spec.mjs", "--reporter=json"],
+    "budget": { "max_steps": 30, "max_cost_usd": 0.5, "max_wall_sec": 300 },
+    "limits": { "memory_mb": 1024, "cpus": 1.0, "max_stdout_kb": 2048 }
+  }
+}

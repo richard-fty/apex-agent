@@ -1,12 +1,8 @@
-"""M4 server integration tests — register, login, ownership, CRUD.
-
-Uses an isolated AppState per test (tmp_path) so the global SQLite file
-isn't touched. Turn/approval/SSE plumbing is covered by the in-process
-runtime flow tests (M2/M3); here we exercise the HTTP surface.
-"""
+"""M4 server integration tests — register, login, ownership, CRUD."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
@@ -16,11 +12,16 @@ from apex_server.deps import build_default_app_state
 from apex_server.routes.events_routes import load_replay_events
 from agent.session.store import SessionSpec
 
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("DATABASE_URL"),
+    reason="DATABASE_URL required for Postgres-backed server integration tests",
+)
+
 
 def _app(tmp_path: Path) -> TestClient:
     state = build_default_app_state(
-        db_path=str(tmp_path / "apex.db"),
         artifact_root=str(tmp_path / "artifacts"),
+        database_url=os.environ.get("DATABASE_URL"),
     )
     app = create_app(state=state)
     return TestClient(app)

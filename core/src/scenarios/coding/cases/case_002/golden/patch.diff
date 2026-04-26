@@ -1,0 +1,28 @@
+diff --git a/src/main.js b/src/main.js
+index 213e31a..cc82ccb 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -12,8 +12,9 @@ function render(list = items) {
+       </div>
+       <p id="counter">${list.length} items</p>
+       <ul id="items">
+-        ${list.map((item) => `<li>${item}</li>`).join("")}
++        ${list.length > 0 ? list.map((item) => `<li>${item}</li>`).join("") : ""}
+       </ul>
++      ${list.length === 0 ? `<p class="empty-state">No items match your filters.</p>` : ""}
+     </section>
+   `;
+ }
+diff --git a/src/styles.css b/src/styles.css
+index 991d9ab..d9d6b11 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -42,3 +42,8 @@ li {
+   padding: 8px 0;
+ }
+ 
++
++.empty-state {
++  color: #667085;
++  font-style: italic;
++}

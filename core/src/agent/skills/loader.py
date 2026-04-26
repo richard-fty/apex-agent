@@ -155,6 +155,14 @@ class SkillLoader:
             return []
 
         candidates = self._intent_strategy.select(user_input, threshold=threshold)
+        if not candidates:
+            scored = [
+                (name, skill.matches_intent(user_input))
+                for name, skill in self.available.items()
+                if name not in self.loaded
+            ]
+            scored.sort(key=lambda item: item[1], reverse=True)
+            candidates = [name for name, score in scored if score >= 0.35]
         pre_loaded: list[str] = []
         for name in candidates:
             if name in self.loaded or name not in self.available:
@@ -163,6 +171,18 @@ class SkillLoader:
                 pre_loaded.append(name)
                 logger.debug("Pre-loaded skill '%s' via %s", name, type(self._intent_strategy).__name__)
         return pre_loaded
+
+    def load_skill_for_tool(self, tool_name: str) -> str | None:
+        """Load the owning skill for a tool if it is installed but currently unloaded."""
+        for name, skill in self.available.items():
+            if name in self.loaded:
+                continue
+            for tool_def, _ in skill.get_tools():
+                if tool_def.name == tool_name:
+                    if self.load_skill(name):
+                        return name
+                    return None
+        return None
 
     def get_loaded_skill_names(self) -> list[str]:
         return list(self.loaded.keys())

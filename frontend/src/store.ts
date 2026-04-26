@@ -4,6 +4,7 @@ import type {
   ApprovalRequest,
   Artifact,
   PlanStep,
+  SearchResultCard,
   TokenUsage,
   User,
 } from "./types";
@@ -30,6 +31,7 @@ export interface ToolCallRecord {
   duration_ms?: number;
   content?: string;
   reason?: string;
+  search_results?: SearchResultCard[];
 }
 
 /** Per-session state. Event-derived only — UI state lives in the top-level
@@ -39,6 +41,8 @@ export interface SessionState {
   toolCalls: Record<string, ToolCallRecord>;
   artifacts: Record<string, Artifact>;
   artifactOrder: string[];
+  loadedSkills: string[];
+  disclaimer: string | null;
   plan: PlanStep[];
   pending: ApprovalRequest | null;
   usage: TokenUsage;
@@ -51,6 +55,8 @@ const emptySession = (): SessionState => ({
   toolCalls: {},
   artifacts: {},
   artifactOrder: [],
+  loadedSkills: [],
+  disclaimer: null,
   plan: [],
   pending: null,
   usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost_usd: 0 },
@@ -154,12 +160,37 @@ export const useStore = create<State>()((set, get) => ({
         break;
       }
 
+      case "education_disclaimer":
+        st.disclaimer = ev.message;
+        break;
+
+      case "skill_auto_loaded":
+        if (!st.loadedSkills.includes(ev.skill_name)) {
+          st.loadedSkills = [...st.loadedSkills, ev.skill_name];
+        }
+        break;
+
       case "turn_finished": {
+        let updated = false;
         for (let i = st.items.length - 1; i >= 0; i--) {
           const it = st.items[i];
           if (it.kind === "assistant" && it.streaming) {
             st.items[i] = { ...it, content: ev.content || it.content, streaming: false };
+            updated = true;
             break;
+          }
+        }
+        if (!updated && ev.content?.trim()) {
+          const last = st.items[st.items.length - 1];
+          const sameAsLastAssistant =
+            last?.kind === "assistant" && last.content.trim() === ev.content.trim();
+          if (!sameAsLastAssistant) {
+            st.items.push({
+              kind: "assistant",
+              content: ev.content,
+              streaming: false,
+              turnIndex: ti,
+            });
           }
         }
         break;
@@ -190,6 +221,7 @@ export const useStore = create<State>()((set, get) => ({
           duration_ms: ev.duration_ms,
           content: ev.content,
           reason: existing?.reason,
+          search_results: ev.search_results ?? existing?.search_results,
         };
         break;
       }
@@ -257,9 +289,11 @@ export const useStore = create<State>()((set, get) => ({
           kind: ev.kind,
           name: ev.name,
           language: ev.language,
+          mime: ev.mime,
           description: ev.description,
           content: "",
           finalized: false,
+          size: null,
         };
         if (!st.artifactOrder.includes(ev.artifact_id)) {
           st.artifactOrder = [...st.artifactOrder, ev.artifact_id];
@@ -279,7 +313,7 @@ export const useStore = create<State>()((set, get) => ({
       case "artifact_finalized": {
         const a = st.artifacts[ev.artifact_id];
         if (!a) break;
-        st.artifacts[ev.artifact_id] = { ...a, finalized: true };
+        st.artifacts[ev.artifact_id] = { ...a, finalized: true, size: ev.size };
         break;
       }
 

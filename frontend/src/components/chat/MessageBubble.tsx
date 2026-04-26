@@ -21,20 +21,9 @@ export function MessageBubble({ role, content, streaming }: Props) {
     );
   }
 
-  // Empty + streaming → show a "Thinking…" shimmer instead of a blank bubble.
+  // Empty + streaming → let the left-side activity strip handle the thinking state.
   if (streaming && !content.trim()) {
-    return (
-      <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-        <span className="inline-flex gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.3s]" />
-          <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.15s]" />
-          <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" />
-        </span>
-        <span className="bg-gradient-to-r from-muted-foreground via-foreground to-muted-foreground bg-[length:200%_100%] bg-clip-text text-transparent animate-shimmer">
-          Thinking…
-        </span>
-      </div>
-    );
+    return null;
   }
 
   // Assistant: flush-left markdown, no bubble background.

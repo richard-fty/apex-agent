@@ -3,8 +3,8 @@ import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useStore } from "../../store";
-import { postJSON } from "../../lib/api";
-import type { User } from "../../types";
+import { getJSONOrNull, postJSON } from "../../lib/api";
+import type { FinancialProfile, User } from "../../types";
 
 export function AuthPage({ mode }: { mode: "login" | "register" }) {
   const [username, setUsername] = useState("");
@@ -13,7 +13,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
   const location = useLocation() as { state?: { from?: { pathname?: string } } };
-  const from = location.state?.from?.pathname ?? "/";
+  const from = location.state?.from?.pathname;
   const setUser = useStore((s) => s.setUser);
 
   async function onSubmit(e: React.FormEvent) {
@@ -24,7 +24,16 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
       const path = mode === "login" ? "/auth/login" : "/auth/register";
       const user = await postJSON<User>(path, { username, password });
       setUser(user);
-      navigate(from, { replace: true });
+      if (from) {
+        navigate(from, { replace: true });
+        return;
+      }
+      if (mode === "register") {
+        navigate("/dashboard", { replace: true });
+        return;
+      }
+      const profile = await getJSONOrNull<FinancialProfile>("/wealth/profile");
+      navigate(profile ? "/dashboard" : "/onboarding", { replace: true });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Auth failed");
     } finally {
@@ -39,7 +48,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
         className="w-full max-w-sm space-y-4 border border-border rounded-lg p-6"
       >
         <h1 className="text-xl font-semibold">
-          {mode === "login" ? "Log in to Apex" : "Create an account"}
+          {mode === "login" ? "Log in to Leverin.ai" : "Create your Leverin.ai account"}
         </h1>
         <div className="space-y-2">
           <label className="text-sm font-medium">Username</label>

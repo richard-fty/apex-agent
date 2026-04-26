@@ -13,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 from types import SimpleNamespace
@@ -62,6 +63,7 @@ class MockBrain(LiteLLMBrain):
     
     def _stream_tool_call(self, tool_name: str, index: int) -> "MockStream":
         """Create a stream that yields a tool call."""
+        arguments = self._tool_arguments(tool_name)
         chunk = SimpleNamespace(
             choices=[SimpleNamespace(
                 delta=SimpleNamespace(
@@ -71,7 +73,7 @@ class MockBrain(LiteLLMBrain):
                         index=0,
                         function=SimpleNamespace(
                             name=tool_name,
-                            arguments='{"path": "tests/fixtures/core_agent/mission.txt"}' if tool_name == "read_file" else '{}'
+                            arguments=json.dumps(arguments)
                         )
                     )]
                 )
@@ -79,6 +81,42 @@ class MockBrain(LiteLLMBrain):
             usage=SimpleNamespace(prompt_tokens=10, completion_tokens=10, total_tokens=20)
         )
         return MockStream([chunk])
+
+    def _tool_arguments(self, tool_name: str) -> dict[str, Any]:
+        if self.test_case.get("id") == "lt1_brief_nvda":
+            if tool_name == "web_research":
+                return {
+                    "query": "NVDA earnings filings analyst news",
+                    "num_results": 5,
+                    "fetch_top": 3,
+                    "max_chars": 4000,
+                }
+            if tool_name == "fetch_market_data":
+                return {"symbol": "NVDA", "period": "6mo", "interval": "1d"}
+            if tool_name == "compute_indicator":
+                return {"symbol": "NVDA", "indicator": "RSI", "period": "6mo", "window": 14}
+            if tool_name == "generate_chart":
+                return {
+                    "symbol": "NVDA",
+                    "period": "6mo",
+                    "indicators": "sma_50,sma_200,volume,rsi",
+                    "chart_type": "candle",
+                }
+            if tool_name == "write_file":
+                return {
+                    "path": "results/lt1_briefing/render.py",
+                    "content": (
+                        "from pathlib import Path\n"
+                        "Path('results/lt1_briefing').mkdir(parents=True, exist_ok=True)\n"
+                        "print('render placeholder')\n"
+                    ),
+                }
+            if tool_name == "run_command":
+                return {"command": "python3 results/lt1_briefing/render.py", "timeout": 30}
+
+        if tool_name == "read_file":
+            return {"path": "tests/fixtures/core_agent/mission.txt"}
+        return {}
     
     def _stream_final_answer(self) -> "MockStream":
         """Create a stream that yields the final answer."""
@@ -141,6 +179,16 @@ MOCK_TOOL_RESPONSES: dict[str, str] = {
     "run_command": "Command executed successfully.",
     "web_search": "Search results: Northstar project is a next-generation AI agent platform.",
     "web_fetch": "Fetched content about AI agent architectures.",
+    "web_research": json.dumps({
+        "query": "NVDA earnings filings analyst news",
+        "results": [
+            {"title": "NVIDIA quarterly results", "url": "https://example.com/nvda/earnings", "snippet": "Revenue and margin update", "text": "Latest quarterly results and outlook."},
+            {"title": "NVIDIA SEC filing", "url": "https://example.com/nvda/filing", "snippet": "10-Q filing", "text": "Recent filing with risk disclosures."},
+            {"title": "Reuters on NVIDIA", "url": "https://example.com/nvda/reuters", "snippet": "Analyst and market reaction", "text": "Market reaction to the latest print."},
+            {"title": "FT on AI spending", "url": "https://example.com/nvda/ft", "snippet": "Datacenter demand context"},
+            {"title": "Bloomberg on semis", "url": "https://example.com/nvda/bloomberg", "snippet": "Sector positioning"}
+        ]
+    }, indent=2),
     "rag_query": "Retrieved: The Northstar project uses a managed-agent architecture.",
     "rag_list_collections": "Collections: documents, code, research",
     "rag_index": "Documents indexed successfully.",

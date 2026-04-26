@@ -18,6 +18,7 @@ export function useSSE(sessionId: string | null) {
     const handlers: string[] = [
       "session_created", "turn_started", "turn_finished", "stream_end", "error",
       "assistant_token", "assistant_message", "assistant_note",
+      "education_disclaimer",
       "skill_auto_loaded", "plan_updated",
       "tool_started", "tool_finished", "tool_denied",
       "approval_requested", "approval_resolved",

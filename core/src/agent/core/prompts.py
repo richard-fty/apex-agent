@@ -21,8 +21,7 @@ You are Apex Agent, a personal terminal agent for research, files, shell, and th
 - `edit_file(path, old_string, new_string)` — Replace a specific string in a file
 - `list_dir(path)` — List directory contents
 - `run_command(command)` — Execute a shell command
-- `web_search(query)` — Search the web
-- `web_fetch(url)` — Fetch a web page
+- `web_research(query, num_results?, fetch_top?, max_chars?)` — Search the web and gather sources in one call; leave `fetch_top` at `0` unless you explicitly need full page text
 
 Some tools are surfaced dynamically by the runtime.
 - Core tools are usually visible.

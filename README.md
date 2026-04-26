@@ -39,6 +39,9 @@ uv sync
 cp .env.example .env
 # Add API keys (at minimum DEEPSEEK_API_KEY for the default model)
 
+# Start Postgres
+docker compose up -d postgres
+
 # TUI
 uv run python -m tui
 
@@ -47,6 +50,39 @@ uv run python main.py
 
 # Eval suite
 uv run python -m eval
+```
+
+## Local Postgres
+
+The repo now uses Postgres for session, auth, and wealth storage. A minimal
+local database is provided via `docker-compose.yml`.
+
+```bash
+docker compose up -d postgres
+docker compose ps
+```
+
+What it does:
+
+- starts a local `postgres:16-alpine` container
+- creates a database using `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`
+- exposes Postgres on `localhost:${POSTGRES_PORT}`
+- stores DB data in the named volume `apex_postgres_data`
+- waits until Postgres is healthy via `pg_isready`
+
+The matching local connection string lives in `.env.example` as:
+
+```bash
+DATABASE_URL=postgresql://apex:apex_dev_password@localhost:5432/apex_agent
+```
+
+Useful commands:
+
+```bash
+docker compose up -d postgres
+docker compose logs -f postgres
+docker compose stop postgres
+docker compose down
 ```
 
 ## Project Structure

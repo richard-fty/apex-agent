@@ -18,18 +18,18 @@ from apex_server.auth import (
     _dev_bypass_enabled,
     dev_bypass_user,
 )
+from apex_server.wealth_store import WealthStore
 from agent.session.archive import SessionArchive
-from agent.session.store import SessionStore, SqliteSessionStore
+from agent.session.store import PostgresSessionStore, SessionStore
 
 
 @dataclass
 class AppState:
     """Application-scoped singletons held on `app.state`.
 
-    All sessions on this process share: one SessionArchive (SQLite file),
+    All sessions on this process share: one durable session archive,
     one event bus (in-memory), one artifact store (filesystem), one auth
-    store. Phase 3 (the server-side split) would replace some of these
-    with Redis / Postgres adapters without changing the API routes.
+    store, and one wealth store.
     """
 
     archive: SessionArchive
@@ -37,6 +37,7 @@ class AppState:
     event_bus: EventBus
     artifact_store: ArtifactStore
     auth: AuthStore
+    wealth_store: WealthStore
     # Runtimes for currently live sessions, keyed by session_id.
     runtimes: dict[str, Any] = field(default_factory=dict)
     runners: dict[str, Any] = field(default_factory=dict)
@@ -60,26 +61,30 @@ def _default_data_dir() -> Path:
 
 def build_default_app_state(
     *,
-    db_path: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    database_url: str | None = None,
 ) -> AppState:
-    """Build singletons with ONE SQLite file holding all related tables
-    (users, auth_sessions, sessions, events, events_fts*). Artifacts live
-    on the filesystem under ``artifact_root`` — bytes belong on disk, not
-    in rows.
+    """Build app singletons on Postgres.
+
+    ``DATABASE_URL`` is required. Artifacts remain on disk under
+    ``artifact_root``.
     """
     data_dir = _default_data_dir()
-    resolved_db = Path(db_path) if db_path is not None else data_dir / "apex.db"
     resolved_artifacts = (
         Path(artifact_root) if artifact_root is not None else data_dir / "artifacts"
     )
-    archive = SessionArchive(db_path=str(resolved_db))
+    if database_url is None:
+        database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is required. SQLite storage has been removed.")
+    archive = SessionArchive(database_url)
     return AppState(
         archive=archive,
-        session_store=SqliteSessionStore(archive=archive),
+        session_store=PostgresSessionStore(archive=archive),
         event_bus=InMemoryEventBus(),
         artifact_store=FilesystemArtifactStore(root=resolved_artifacts),
-        auth=AuthStore(db_path=str(resolved_db)),
+        auth=AuthStore(database_url),
+        wealth_store=WealthStore(database_url),
     )
 
 

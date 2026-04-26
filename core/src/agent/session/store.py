@@ -1,9 +1,7 @@
-"""Session metadata store — wraps the SQLite archive behind a typed protocol.
+"""Session metadata store — wraps the configured archive behind a typed protocol.
 
-Keeps the archive untouched (additive); adds typed `Session`/`SessionSpec`
-models and `owner_user_id` stored inside archive metadata. When we move to
-Postgres in Phase 1, the protocol stays the same and the archive impl gets
-swapped for a `PostgresSessionStore`.
+Adds typed `Session`/`SessionSpec` models while keeping runtime event
+mirroring in the archive layer.
 
 Event mirroring (runtime -> archive) still happens via the runtime's
 _persist_session path; this store only manages the Session row lifecycle.
@@ -92,8 +90,8 @@ class SessionStore(Protocol):
         ...
 
 
-class SqliteSessionStore:
-    """SessionStore backed by the existing SessionArchive SQLite database."""
+class PostgresSessionStore:
+    """SessionStore backed by the configured session archive."""
 
     def __init__(self, archive: SessionArchive | None = None) -> None:
         self.archive = archive or SessionArchive()
@@ -150,27 +148,15 @@ class SqliteSessionStore:
         return updated
 
     async def list_for_user(self, owner_user_id: str) -> list[Session]:
-        rows = self.archive.db.execute(
-            "SELECT session_id FROM sessions WHERE owner_user_id = ? "
-            "ORDER BY created_at DESC",
-            [owner_user_id],
-        ).fetchall()
         out: list[Session] = []
-        for r in rows:
-            s = await self.get(r["session_id"])
+        for session_id in self.archive.list_session_ids_for_user(owner_user_id):
+            s = await self.get(session_id)
             if s is not None:
                 out.append(s)
         return out
 
     async def delete(self, session_id: str) -> None:
-        # SessionArchive has no delete today; implement here. Cascades by FK.
-        self.archive.db.execute(
-            "DELETE FROM events WHERE session_id = ?", [session_id]
-        )
-        self.archive.db.execute(
-            "DELETE FROM sessions WHERE session_id = ?", [session_id]
-        )
-        self.archive.db.commit()
+        self.archive.delete_session(session_id)
 
     async def append_event(
         self,

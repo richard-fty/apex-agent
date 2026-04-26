@@ -29,6 +29,7 @@ class BuiltinTool(ABC):
     feature_flag: str | None = None
     shell_command_arg: str | None = None
     path_access: str | None = None
+    compliance_scope: str | None = None
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> str:
@@ -52,6 +53,7 @@ class BuiltinTool(ABC):
             visible=self.loading_strategy != ToolLoadingStrategy.RUNTIME_INJECTED,
             shell_command_arg=self.shell_command_arg,
             path_access=self.path_access,
+            compliance_scope=self.compliance_scope,
         )
 
     def __init_subclass__(cls, **kwargs: Any) -> None:

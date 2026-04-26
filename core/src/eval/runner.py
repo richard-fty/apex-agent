@@ -11,7 +11,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
+import json
 import logging
+import os
+import shlex
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -38,10 +44,155 @@ from eval.comparator import (
     save_baseline,
 )
 from eval.report import generate_report
+from scenarios.lt1_equity_briefing.docx_utils import create_briefing_docx, write_placeholder_png
 from scenarios.registry import get_scenario, list_scenarios
 from config import settings
+from agent.runtime.sandbox import DockerSandbox, LocalSandbox, SandboxMount
+from agent.runtime.trace import Trace
 
 console = Console()
+
+
+def _lt1_mock_news() -> list[dict[str, str]]:
+    return [
+        {
+            "title": "NVIDIA quarterly results",
+            "url": "https://example.com/nvda/earnings",
+            "snippet": "Revenue and margin update",
+        },
+        {
+            "title": "NVIDIA SEC filing",
+            "url": "https://example.com/nvda/filing",
+            "snippet": "10-Q filing",
+        },
+        {
+            "title": "Reuters on NVIDIA",
+            "url": "https://example.com/nvda/reuters",
+            "snippet": "Analyst and market reaction",
+        },
+        {
+            "title": "FT on AI spending",
+            "url": "https://example.com/nvda/ft",
+            "snippet": "Datacenter demand context",
+        },
+        {
+            "title": "Bloomberg on semis",
+            "url": "https://example.com/nvda/bloomberg",
+            "snippet": "Sector positioning",
+        },
+    ]
+
+
+def _make_mock_tool_execute(original_execute: Any, test_case: dict[str, Any]):
+    from agent.core.models import ToolResult
+
+    async def mock_execute(tool_call):
+        if tool_call.name == "write_file":
+            return await original_execute(tool_call)
+
+        if test_case.get("id") == "lt1_brief_nvda":
+            if tool_call.name == "web_research":
+                payload = {
+                    "query": tool_call.arguments.get("query", "NVDA earnings filings analyst news"),
+                    "results": [
+                        {**item, "text": f"Fetched text for {item['title']}."}
+                        if idx < 3 else item
+                        for idx, item in enumerate(_lt1_mock_news())
+                    ],
+                }
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    name=tool_call.name,
+                    content=json.dumps(payload, indent=2),
+                    success=True,
+                    summary="Mock web research completed.",
+                )
+
+            if tool_call.name == "fetch_market_data":
+                payload = {
+                    "symbol": "NVDA",
+                    "period": "6mo",
+                    "interval": "1d",
+                    "data_points": 126,
+                    "latest": {"date": "2026-04-20", "close": 127.84, "volume": 48200000},
+                    "stats": {"period_high": 153.11, "period_low": 95.42, "price_change_pct": 18.7},
+                }
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    name=tool_call.name,
+                    content=json.dumps(payload, indent=2),
+                    success=True,
+                    summary="Mock market data fetched.",
+                )
+
+            if tool_call.name == "compute_indicator":
+                indicator = str(tool_call.arguments.get("indicator", "RSI")).upper()
+                payload = {"symbol": "NVDA", "indicator": indicator}
+                if indicator == "RSI":
+                    payload |= {"latest_value": 61.4, "signal": "neutral"}
+                elif indicator == "SMA":
+                    payload |= {"latest_value": 121.3, "signal": "price above SMA"}
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    name=tool_call.name,
+                    content=json.dumps(payload, indent=2),
+                    success=True,
+                    summary=f"Mock {indicator} computed.",
+                )
+
+            if tool_call.name == "generate_chart":
+                chart_path = Path("results/lt1_briefing/NVDA_chart.png")
+                write_placeholder_png(chart_path)
+                payload = {
+                    "chart_saved": str(chart_path),
+                    "symbol": "NVDA",
+                    "period": "6mo",
+                    "indicators": ["sma_50", "sma_200", "rsi"],
+                }
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    name=tool_call.name,
+                    content=json.dumps(payload, indent=2),
+                    success=True,
+                    summary="Mock chart generated.",
+                )
+
+            if tool_call.name == "run_command":
+                chart_path = Path("results/lt1_briefing/NVDA_chart.png")
+                write_placeholder_png(chart_path)
+                create_briefing_docx(
+                    "results/lt1_briefing/NVDA_briefing.docx",
+                    title="NVDA - Equity Research Briefing",
+                    summary="NVIDIA remains levered to AI infrastructure demand, with recent results supporting continued revenue momentum.",
+                    interpretation="Price is above the medium-term trend, RSI is neutral, and the attached chart captures the six-month move.",
+                    news_items=_lt1_mock_news(),
+                    risks=[
+                        "Customer concentration in hyperscale AI demand can amplify cyclical downside.",
+                        "Export controls and supply-chain constraints remain material operational risks.",
+                    ],
+                    sources=[{"url": item["url"]} for item in _lt1_mock_news()],
+                    chart_path=chart_path,
+                )
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    name=tool_call.name,
+                    content="Rendered results/lt1_briefing/NVDA_briefing.docx\n[exit code: 0]",
+                    success=True,
+                    summary="Mock render command completed.",
+                )
+
+        from eval.mock_brain import get_mock_tool_response
+
+        response = get_mock_tool_response(tool_call.name, tool_call.arguments)
+        return ToolResult(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            content=response,
+            success=True,
+            summary=response[:240],
+        )
+
+    return mock_execute
 
 
 def load_test_cases(
@@ -115,47 +266,20 @@ async def _run_mock(
     runtime: RuntimeConfig,
 ) -> dict[str, Any]:
     """Run a test case with mock LLM and mock tool responses (no API calls)."""
-    from agent.session.engine import SessionEngine
     from agent.session.archive import SessionArchive
+    from agent.session.engine import SessionEngine
     from agent.runtime.orchestrator import SessionOrchestrator
     from agent.runtime.guards import RuntimeGuard
     from agent.runtime.trace import Trace
-    from eval.mock_brain import MockBrain, inject_mock_brain
-    from eval.mock_mode import MockToolRegistry
+    from eval.mock_brain import inject_mock_brain
     
     console.print("  [dim]MOCK MODE: Using deterministic responses[/dim]")
     
     # Create archive and session
     archive = SessionArchive()
     session = SessionEngine(model=model, context_strategy=strategy)
-    
-    # Set up mock tool registry
-    mock_registry = MockToolRegistry()
-    from eval.mock_brain import MOCK_TOOL_RESPONSES
-    for tool_name, response in MOCK_TOOL_RESPONSES.items():
-        mock_registry.mock_static(tool_name, response)
-    
-    # Override session's dispatch with mock responses
     original_execute = session.dispatch.execute
-    async def mock_execute(tool_call):
-        from eval.mock_brain import get_mock_tool_response
-        from agent.core.models import ToolResult
-        import time
-        
-        tool_start = time.time()
-        response = get_mock_tool_response(tool_call.name, tool_call.arguments)
-        tool_ms = (time.time() - tool_start) * 1000
-        
-        return ToolResult(
-            tool_call_id=tool_call.id,
-            name=tool_call.name,
-            content=response,
-            success=True,
-            summary=response[:240],
-        )
-    
-    # Inject mock execution
-    session.dispatch.execute = mock_execute
+    session.dispatch.execute = _make_mock_tool_execute(original_execute, test_case)
     
     # Create orchestrator and runtime
     orchestrator = SessionOrchestrator(archive=archive)
@@ -208,153 +332,112 @@ async def _run_lt1(
     use_mock: bool = False,
 ) -> dict[str, Any]:
     """LT1 tier: checkpoint at midpoint, wake(), continue without duplicate work."""
-    import tempfile
-    from agent.runtime.loop import create_session
+    from agent.runtime.orchestrator import SessionOrchestrator
     from agent.runtime.guards import RuntimeGuard
+    from agent.runtime.trace import Trace
+    from agent.runtime.wake import wake
+    from agent.session.archive import SessionArchive
+    from agent.session.engine import SessionEngine
     
     mode_str = "MOCK " if use_mock else ""
     console.print(f"  [dim]LT1: {mode_str}Running with checkpoint/resume...[/dim]")
-    
-    # Create a temporary archive for this LT1 run
-    with tempfile.TemporaryDirectory() as tmpdir:
-        archive = SessionArchive(db_path=f"{tmpdir}/lt1_archive.db")
-        
-        # Create initial runtime with archive
-        rt = create_session(
-            user_input=test_case["input"],
-            model=model,
-            context_strategy=strategy,
-            runtime_config=runtime,
-            archive=archive,
+
+    archive = SessionArchive()
+
+    session = SessionEngine(model=model, context_strategy=strategy, archive=archive)
+    orchestrator = SessionOrchestrator(archive=archive)
+    handle = orchestrator.create_runtime(
+        session_engine=session,
+        model=model,
+        runtime_config=runtime,
+    )
+    rt = handle.runtime
+
+    if use_mock:
+        from eval.mock_brain import inject_mock_brain
+
+        inject_mock_brain(rt, test_case)
+        original_execute = rt.session_engine.dispatch.execute
+        rt.session_engine.dispatch.execute = _make_mock_tool_execute(original_execute, test_case)
+
+    expected_tools = test_case.get("expected_tools", [])
+    kill_after_tools = max(1, len(expected_tools) // 2) if expected_tools else max(1, test_case.get("max_steps", 20) // 2)
+    trace = Trace(
+        run_id=f"lt1_{test_case.get('id', 'unknown')}",
+        model=model,
+        scenario=scenario.name,
+        prompt=test_case["input"],
+        context_strategy=strategy,
+    )
+
+    final_content = ""
+    tool_finishes = 0
+    async for event in rt.start_turn(test_case["input"], guard=RuntimeGuard(runtime), trace=trace):
+        final_content = rt._map_event_to_trace(event, trace, lambda e: None, final_content)
+        if event.type == "tool_finished":
+            tool_finishes += 1
+            if tool_finishes >= kill_after_tools:
+                console.print(f"  [dim]LT1: Killing after tool {tool_finishes}...[/dim]")
+                break
+
+    rt._persist_session()
+    session_id = rt.session.session_id
+
+    events_before_wake = archive.get_events(session_id)
+    tool_calls_before = [
+        e for e in events_before_wake
+        if e.get("type") == "tool_finished"
+    ]
+    console.print(f"  [dim]LT1: {len(tool_calls_before)} tool calls before wake[/dim]")
+
+    rt2 = wake(archive, session_id, runtime_config=runtime)
+
+    if use_mock:
+        from eval.mock_brain import inject_mock_brain
+
+        inject_mock_brain(rt2, test_case)
+        original_execute = rt2.session_engine.dispatch.execute
+        rt2.session_engine.dispatch.execute = _make_mock_tool_execute(original_execute, test_case)
+
+    final_content = ""
+    async for event in rt2.start_turn("continue", guard=RuntimeGuard(runtime), trace=trace):
+        final_content = rt2._map_event_to_trace(event, trace, lambda e: None, final_content)
+
+    events_after_wake = archive.get_events(session_id)
+    tool_calls_after = [
+        e for e in events_after_wake
+        if e.get("type") == "tool_finished"
+    ]
+
+    unique_tools = set()
+    duplicates = []
+    for tc in tool_calls_after:
+        payload = tc.get("payload", {})
+        signature = (
+            payload.get("tool_name") or payload.get("name"),
+            json.dumps(payload.get("arguments", {}), sort_keys=True),
         )
-        
-        # Inject mock components if in mock mode
-        if use_mock:
-            from eval.mock_brain import inject_mock_brain, get_mock_tool_response
-            from agent.core.models import ToolResult
-            import time
-            
-            # Inject mock brain
-            inject_mock_brain(rt, test_case)
-            
-            # Set up mock tool execution
-            original_execute = rt.session_engine.dispatch.execute
-            async def mock_lt1_execute(tool_call):
-                tool_start = time.time()
-                response = get_mock_tool_response(tool_call.name, tool_call.arguments)
-                tool_ms = (time.time() - tool_start) * 1000
-                return ToolResult(
-                    tool_call_id=tool_call.id,
-                    name=tool_call.name,
-                    content=response,
-                    success=True,
-                    summary=response[:240],
-                )
-            rt.session_engine.dispatch.execute = mock_lt1_execute
-        
-        max_steps = test_case.get("max_steps", 20)
-        kill_step = max_steps // 2  # Kill at midpoint
-        
-        # Run until kill_step
-        step_count = 0
-        events_before = []
-        
-        async for event in rt.start_turn(test_case["input"], guard=RuntimeGuard(runtime)):
-            events_before.append(event)
-            if event.type == "step":
-                step_count = event.data.get("step", 0)
-                if step_count >= kill_step:
-                    console.print(f"  [dim]LT1: Killing at step {step_count}...[/dim]")
-                    break
-        
-        # Persist state
-        rt._persist_session()
-        session_id = rt.session.session_id
-        
-        # Get tool calls before wake
-        events_before_wake = archive.get_events(session_id)
-        tool_calls_before = [
-            e for e in events_before_wake 
-            if e.get("type") == "tool_finished"
-        ]
-        console.print(f"  [dim]LT1: {len(tool_calls_before)} tool calls before wake[/dim]")
-        
-        # Simulate crash and wake
-        rt2 = wake(archive, session_id, runtime_config=runtime)
-        
-        # Inject mock components into woken runtime if in mock mode
-        if use_mock:
-            from eval.mock_brain import inject_mock_brain, get_mock_tool_response
-            from agent.core.models import ToolResult
-            import time
-            
-            # Inject mock brain with continuation behavior
-            inject_mock_brain(rt2, test_case)
-            
-            # Set up mock tool execution for continuation
-            async def mock_lt2_execute(tool_call):
-                tool_start = time.time()
-                response = get_mock_tool_response(tool_call.name, tool_call.arguments)
-                tool_ms = (time.time() - tool_start) * 1000
-                return ToolResult(
-                    tool_call_id=tool_call.id,
-                    name=tool_call.name,
-                    content=response,
-                    success=True,
-                    summary=response[:240],
-                )
-            rt2.session_engine.dispatch.execute = mock_lt2_execute
-        
-        # Continue from where we left off
-        events_after = []
-        async for event in rt2.start_turn("continue", guard=RuntimeGuard(runtime)):
-            events_after.append(event)
-        
-        # Get final tool calls
-        events_after_wake = archive.get_events(session_id)
-        tool_calls_after = [
-            e for e in events_after_wake 
-            if e.get("type") == "tool_finished"
-        ]
-        
-        # Verify no duplicate tool calls
-        unique_tools = set()
-        duplicates = []
-        for tc in tool_calls_after:
-            tool_name = tc.get("payload", {}).get("tool_name")
-            if tool_name in unique_tools:
-                duplicates.append(tool_name)
-            unique_tools.add(tool_name)
-        
-        # Build trace from final state
-        from agent.runtime.trace import Trace
-        trace = Trace(
-            test_case_id=test_case.get("id", "lt1"),
-            model=model,
-            context_strategy=strategy,
-        )
-        trace.events = events_after_wake
-        trace.outcome = rt2.session.state.value
-        trace.step_count = len([e for e in events_after_wake if e.get("type") == "step"])
-        
-        # Evaluate
-        score = scenario.evaluate(trace, test_case)
-        score["model"] = model
-        score["context_strategy"] = strategy
-        score["scenario"] = scenario.name
-        score["lt1_checkpoint_step"] = kill_step
-        score["lt1_tool_calls_before_wake"] = len(tool_calls_before)
-        score["lt1_tool_calls_total"] = len(tool_calls_after)
-        score["lt1_duplicate_calls"] = len(duplicates)
-        score["lt1_success"] = len(duplicates) == 0 and rt2.session.state.value == "completed"
-        
-        if duplicates:
-            console.print(f"  [bold red]LT1 FAILED: Duplicate tool calls: {duplicates}[/bold red]")
-        else:
-            console.print(f"  [dim]LT1: Success - {len(tool_calls_after)} total tool calls, no duplicates[/dim]")
-        
-        trace.save("results")
-        return score
+        if signature in unique_tools:
+            duplicates.append(signature[0])
+        unique_tools.add(signature)
+
+    score = scenario.evaluate(trace, test_case)
+    score["model"] = model
+    score["context_strategy"] = strategy
+    score["scenario"] = scenario.name
+    score["lt1_checkpoint_step"] = kill_after_tools
+    score["lt1_tool_calls_before_wake"] = len(tool_calls_before)
+    score["lt1_tool_calls_total"] = len(tool_calls_after)
+    score["lt1_duplicate_calls"] = len(duplicates)
+    score["lt1_success"] = len(duplicates) == 0 and rt2.session.state.value == "completed"
+
+    if duplicates:
+        console.print(f"  [bold red]LT1 FAILED: Duplicate tool calls: {duplicates}[/bold red]")
+    else:
+        console.print(f"  [dim]LT1: Success - {len(tool_calls_after)} total tool calls, no duplicates[/dim]")
+
+    trace.save("results")
+    return score
 
 
 async def run_benchmark(
@@ -420,6 +503,226 @@ async def run_benchmark(
                     })
 
     return results
+
+
+async def run_coding_benchmark(
+    scenario: Any,
+    test_cases: list[dict[str, Any]],
+    *,
+    model: str,
+    strategy: str,
+    timeout: int,
+    replay: str | None,
+    use_mock: bool,
+    output_dir: str,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    out_root = Path(output_dir).resolve()
+    sandbox_root = out_root / "sandbox"
+    trace_root = out_root / "traces"
+    sandbox_root.mkdir(parents=True, exist_ok=True)
+    trace_root.mkdir(parents=True, exist_ok=True)
+
+    selected = test_cases
+    if replay and replay != "all":
+        selected = [case for case in test_cases if case.get("id") == replay]
+    if replay and not selected:
+        raise ValueError(f"Replay case not found: {replay}")
+
+    for case in selected:
+        case_id = case["id"]
+        console.print(f"\n[bold]Coding case:[/bold] {case_id}")
+        start = time.time()
+        workspace = _prepare_coding_workspace(case, sandbox_root)
+        trace = Trace(
+            run_id=f"coding_{case_id}_{int(start)}",
+            model=model,
+            scenario=scenario.name,
+            prompt=case["input"],
+            context_strategy=strategy,
+        )
+        try:
+            if replay or use_mock:
+                _apply_patch_file(workspace, _case_path(case, case["golden_patch"]))
+            else:
+                old_cwd = Path.cwd()
+                try:
+                    os.chdir(workspace)
+                    await run_single(
+                        scenario,
+                        model,
+                        case,
+                        strategy,
+                        timeout=timeout,
+                        use_mock=False,
+                    )
+                finally:
+                    os.chdir(old_cwd)
+
+            trace.gate_results = await _run_coding_gates(case, workspace, timeout=timeout)
+            trace.artifacts.extend(_capture_coding_artifacts(case, workspace, out_root))
+            trace.finish(output="coding gates completed")
+            score = scenario.evaluate(trace, case)
+            score["model"] = model
+            score["context_strategy"] = strategy
+            score["scenario"] = scenario.name
+            score["mock_mode"] = use_mock
+            score["replay_mode"] = bool(replay)
+            score["duration_seconds"] = time.time() - start
+            results.append(score)
+        except Exception as exc:
+            trace.finish(error=str(exc))
+            results.append({
+                "test_case_id": case_id,
+                "model": model,
+                "context_strategy": strategy,
+                "scenario": scenario.name,
+                "total_score": 0.0,
+                "install_passed": False,
+                "build_passed": False,
+                "test_passed": False,
+                "duration_seconds": time.time() - start,
+                "cost_usd": trace.total_usage.cost_usd,
+                "error": str(exc),
+            })
+        finally:
+            trace.save(str(trace_root))
+
+    csv_path = _write_coding_csv(results, out_root)
+    console.print(f"[dim]Coding CSV saved to {csv_path}[/dim]")
+    return results
+
+
+def _prepare_coding_workspace(case: dict[str, Any], sandbox_root: Path) -> Path:
+    scenario_dir = Path(__file__).resolve().parents[1] / "scenarios" / "coding"
+    template = scenario_dir / "templates" / case["template"]
+    workspace = sandbox_root / case["id"]
+    if workspace.exists():
+        shutil.rmtree(workspace)
+    shutil.copytree(template, workspace)
+    cases_dst = workspace / "cases"
+    cases_dst.mkdir(parents=True, exist_ok=True)
+    case_src = _case_path(case, case["golden_patch"]).parents[1]
+    shutil.copytree(case_src, cases_dst / case_src.name, dirs_exist_ok=True)
+    _git(workspace, "init")
+    _git(workspace, "config", "user.email", "apex@example.invalid")
+    _git(workspace, "config", "user.name", "Apex Eval")
+    _git(workspace, "add", ".")
+    _git(workspace, "commit", "-m", "baseline")
+    return workspace
+
+
+def _case_path(case: dict[str, Any], rel: str) -> Path:
+    scenario_dir = Path(__file__).resolve().parents[1] / "scenarios" / "coding"
+    return scenario_dir / rel
+
+
+def _apply_patch_file(workspace: Path, patch_path: Path) -> None:
+    result = subprocess.run(
+        ["git", "apply", "--whitespace=nowarn", str(patch_path)],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout or f"git apply failed: {patch_path}")
+
+
+async def _run_coding_gates(
+    case: dict[str, Any],
+    workspace: Path,
+    *,
+    timeout: int,
+) -> dict[str, bool]:
+    manifest = case["manifest"]
+    sandbox = _make_gate_sandbox(workspace)
+    results: dict[str, bool] = {}
+    for stage in ("install", "build", "test"):
+        cmd = _stage_command(manifest[stage], case)
+        network = "bridge" if stage == "install" else "none"
+        result = await sandbox.run_oneshot(cmd, timeout=timeout, network=network)
+        (workspace / f"{stage}.log").write_text(
+            (result.stdout or "") + ("\n[stderr]\n" + result.stderr if result.stderr else ""),
+            encoding="utf-8",
+        )
+        results[stage] = result.exit_code == 0 and not result.timed_out
+        if not results[stage]:
+            break
+    return results
+
+
+def _make_gate_sandbox(workspace: Path):
+    if _docker_daemon_available():
+        image = os.environ.get("APEX_SANDBOX_IMAGE", "node:22-alpine")
+        return DockerSandbox(
+            image=image,
+            work_dir="/workspace",
+            network="none",
+            mounts=[SandboxMount(source=str(workspace), target="/workspace", read_only=False)],
+        )
+    return LocalSandbox(
+        workspace_root=str(workspace),
+        env_allowlist={
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "TERM",
+            "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH",
+        },
+    )
+
+
+def _docker_daemon_available() -> bool:
+    if not shutil.which("docker"):
+        return False
+    result = subprocess.run(
+        ["docker", "version", "--format", "{{.Server.Version}}"],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _stage_command(parts: list[str], case: dict[str, Any]) -> str:
+    return shlex.join(parts)
+
+
+def _capture_coding_artifacts(case: dict[str, Any], workspace: Path, out_root: Path) -> list[dict[str, Any]]:
+    patch = subprocess.run(["git", "diff"], cwd=workspace, capture_output=True, text=True).stdout
+    patch_path = out_root / f"{case['id']}_patch.diff"
+    patch_path.write_text(patch, encoding="utf-8")
+    return [{"kind": "code", "language": "diff", "path": str(patch_path)}]
+
+
+def _write_coding_csv(results: list[dict[str, Any]], out_root: Path) -> Path:
+    path = out_root / f"coding_eval_{int(time.time())}.csv"
+    fields = [
+        "case_id",
+        "install_passed",
+        "build_passed",
+        "test_passed",
+        "score",
+        "duration_sec",
+        "cost_usd",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader()
+        for row in results:
+            writer.writerow({
+                "case_id": row.get("test_case_id"),
+                "install_passed": row.get("install_passed", False),
+                "build_passed": row.get("build_passed", False),
+                "test_passed": row.get("test_passed", False),
+                "score": row.get("total_score", 0.0),
+                "duration_sec": round(float(row.get("duration_seconds", 0.0)), 3),
+                "cost_usd": row.get("cost_usd", 0.0),
+            })
+    return path
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def print_results_table(results: list[dict[str, Any]]) -> None:
@@ -489,6 +792,13 @@ async def main() -> None:
         "--mock", action="store_true",
         help="Use mock LLM and tool responses (no API calls, for CI testing)",
     )
+    parser.add_argument(
+        "--replay",
+        nargs="?",
+        const="all",
+        default=None,
+        help="For coding scenario: skip agent, apply golden patch, and run gates. Optional case id.",
+    )
     args = parser.parse_args()
     
     # Check for mock mode via environment variable or CLI flag
@@ -503,6 +813,25 @@ async def main() -> None:
 
     if not test_cases:
         console.print("[bold red]No test cases found.[/bold red]")
+        return
+
+    if args.scenario == "coding":
+        if len(models) > 1 or len(strategies) > 1:
+            console.print("[yellow]Coding MVP uses the first model and strategy only.[/yellow]")
+        results = await run_coding_benchmark(
+            scenario,
+            test_cases,
+            model=models[0],
+            strategy=strategies[0],
+            timeout=args.timeout,
+            replay=args.replay,
+            use_mock=use_mock,
+            output_dir=args.output,
+        )
+        console.print()
+        print_results_table(results)
+        if args.replay and any(r.get("total_score", 0.0) < 1.0 for r in results):
+            raise SystemExit(1)
         return
 
     # Run benchmark

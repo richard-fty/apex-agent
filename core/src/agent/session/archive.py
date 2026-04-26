@@ -1,23 +1,23 @@
-"""SQLite + FTS5 session archive.
+"""Postgres durable session archive.
 
-Append-only event log with BM25 full-text search. Durable persistence
-with positional reads and recall queries.
-
-Key properties:
-  - Append-only: INSERT only, never UPDATE/DELETE on events
-  - WAL mode: concurrent readers (TUI) + single writer (harness)
-  - FTS5: BM25-ranked text search for recall_session
-  - Positional reads: getEvents(session_id, after=cursor)
+This is the canonical session storage backend for the app. A valid
+``DATABASE_URL`` (or explicit DSN) is required.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
+import os
+import threading
 import time
-from pathlib import Path
 from typing import Any
 
+try:  # pragma: no cover - depends on optional runtime dependency
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:  # pragma: no cover
+    psycopg = None
+    dict_row = None
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -27,37 +27,29 @@ CREATE TABLE IF NOT EXISTS sessions (
     context_strategy TEXT NOT NULL,
     state            TEXT DEFAULT 'idle',
     stop_reason      TEXT,
-    created_at       REAL DEFAULT (unixepoch('subsec')),
-    metadata         TEXT
+    created_at       DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+    metadata         JSONB,
+    owner_user_id    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id       TEXT NOT NULL REFERENCES sessions(session_id),
+    id               BIGSERIAL PRIMARY KEY,
+    session_id       TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
     seq              INTEGER NOT NULL,
     event_type       TEXT NOT NULL,
-    timestamp        REAL NOT NULL,
-    payload          TEXT NOT NULL,
+    timestamp        DOUBLE PRECISION NOT NULL,
+    payload          JSONB NOT NULL,
     content_text     TEXT,
     UNIQUE(session_id, seq)
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
-    content_text,
-    content='events',
-    content_rowid='id'
-);
-
-CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN
-    INSERT INTO events_fts(rowid, content_text) VALUES (new.id, new.content_text);
-END;
+CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_user_id, created_at DESC);
 """
 
 
 def _extract_searchable_text(event_type: str, payload: dict[str, Any]) -> str:
-    """Pull human-readable text from an event for FTS5 indexing."""
+    """Pull human-readable text from an event for recall queries."""
     if event_type in ("user_message_added", "user_input_received"):
         return payload.get("content", payload.get("user_input", ""))
     if event_type == "assistant_message_added":
@@ -77,23 +69,31 @@ def _extract_searchable_text(event_type: str, payload: dict[str, Any]) -> str:
     return ""
 
 
-class SessionArchive:
-    """SQLite + FTS5 durable session archive."""
+def _coerce_json(value: Any) -> Any:
+    if value is None or isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
 
-    def __init__(self, db_path: str = "results/apex.db") -> None:
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False lets FastAPI's threadpool share this handle;
-        # writes are serialized behind the connection's implicit lock.
-        self.db = sqlite3.connect(db_path, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript(_SCHEMA)
-        # Idempotent migration: older DBs don't have owner_user_id yet.
-        try:
-            self.db.execute("ALTER TABLE sessions ADD COLUMN owner_user_id TEXT")
-            self.db.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
+
+class SessionArchive:
+    """Postgres durable session archive."""
+
+    def __init__(self, dsn: str | None = None) -> None:
+        if dsn is None:
+            dsn = os.environ.get("DATABASE_URL")
+        if not dsn:
+            raise RuntimeError("DATABASE_URL is required for Postgres session storage.")
+        if psycopg is None:  # pragma: no cover - depends on optional dependency
+            raise RuntimeError(
+                "psycopg is required for Postgres storage. Install psycopg[binary] first."
+            )
+        self._dsn = dsn
+        self._lock = threading.RLock()
+        self.db = psycopg.connect(dsn, autocommit=True, row_factory=dict_row)
+        with self._lock, self.db.cursor() as cur:
+            cur.execute(_SCHEMA)
         self._seq_cache: dict[str, int] = {}
 
     def create_session(
@@ -106,14 +106,23 @@ class SessionArchive:
         metadata: dict[str, Any] | None = None,
         owner_user_id: str | None = None,
     ) -> None:
-        self.db.execute(
-            "INSERT OR IGNORE INTO sessions "
-            "(session_id, project_id, model, context_strategy, metadata, owner_user_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [session_id, project_id, model, context_strategy,
-             json.dumps(metadata or {}), owner_user_id],
-        )
-        self.db.commit()
+        with self._lock, self.db.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sessions (
+                    session_id, project_id, model, context_strategy, metadata, owner_user_id
+                ) VALUES (%s, %s, %s, %s, CAST(%s AS JSONB), %s)
+                ON CONFLICT (session_id) DO NOTHING
+                """,
+                [
+                    session_id,
+                    project_id,
+                    model,
+                    context_strategy,
+                    json.dumps(metadata or {}, default=str),
+                    owner_user_id,
+                ],
+            )
         self._seq_cache[session_id] = self.get_last_seq(session_id)
 
     def emit_event(
@@ -122,25 +131,34 @@ class SessionArchive:
         event_type: str,
         payload: dict[str, Any],
     ) -> int:
-        """Append an event. Returns the sequence number."""
         seq = self._seq_cache.get(session_id, 0) + 1
         self._seq_cache[session_id] = seq
         content_text = _extract_searchable_text(event_type, payload)
-        self.db.execute(
-            "INSERT INTO events (session_id, seq, event_type, timestamp, payload, content_text) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [session_id, seq, event_type, time.time(), json.dumps(payload, default=str),
-             content_text],
-        )
-        self.db.commit()
+        with self._lock, self.db.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO events (
+                    session_id, seq, event_type, timestamp, payload, content_text
+                ) VALUES (%s, %s, %s, %s, CAST(%s AS JSONB), %s)
+                """,
+                [
+                    session_id,
+                    seq,
+                    event_type,
+                    time.time(),
+                    json.dumps(payload, default=str),
+                    content_text,
+                ],
+            )
         return seq
 
     def get_last_seq(self, session_id: str) -> int:
-        """Return the latest persisted sequence number for a session."""
-        row = self.db.execute(
-            "SELECT COALESCE(MAX(seq), 0) AS last_seq FROM events WHERE session_id = ?",
-            [session_id],
-        ).fetchone()
+        with self._lock, self.db.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(seq), 0) AS last_seq FROM events WHERE session_id = %s",
+                [session_id],
+            )
+            row = cur.fetchone()
         last_seq = int(row["last_seq"]) if row is not None else 0
         self._seq_cache[session_id] = last_seq
         return last_seq
@@ -150,20 +168,25 @@ class SessionArchive:
         session_id: str,
         after: int = 0,
     ) -> list[dict[str, Any]]:
-        """Read events, optionally after a cursor position."""
-        rows = self.db.execute(
-            "SELECT seq, event_type, timestamp, payload FROM events "
-            "WHERE session_id = ? AND seq > ? ORDER BY seq",
-            [session_id, after],
-        ).fetchall()
+        with self._lock, self.db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT seq, event_type, timestamp, payload
+                FROM events
+                WHERE session_id = %s AND seq > %s
+                ORDER BY seq
+                """,
+                [session_id, after],
+            )
+            rows = cur.fetchall()
         return [
             {
-                "seq": r["seq"],
-                "type": r["event_type"],
-                "timestamp": r["timestamp"],
-                "payload": json.loads(r["payload"]),
+                "seq": row["seq"],
+                "type": row["event_type"],
+                "timestamp": row["timestamp"],
+                "payload": _coerce_json(row["payload"]) or {},
             }
-            for r in rows
+            for row in rows
         ]
 
     def recall(
@@ -172,24 +195,31 @@ class SessionArchive:
         query: str,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        """BM25-ranked full-text search within a session."""
-        rows = self.db.execute(
-            "SELECT e.seq, e.event_type, e.payload, "
-            "snippet(events_fts, 0, '»', '«', '...', 64) as fragment "
-            "FROM events e "
-            "JOIN events_fts ON e.id = events_fts.rowid "
-            "WHERE e.session_id = ? AND events_fts MATCH ? "
-            "ORDER BY rank LIMIT ?",
-            [session_id, query, limit],
-        ).fetchall()
+        pattern = f"%{query}%"
+        with self._lock, self.db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT seq, event_type, payload, LEFT(COALESCE(content_text, ''), 240) AS fragment
+                FROM events
+                WHERE session_id = %s
+                  AND (
+                    COALESCE(content_text, '') ILIKE %s
+                    OR CAST(payload AS TEXT) ILIKE %s
+                  )
+                ORDER BY seq DESC
+                LIMIT %s
+                """,
+                [session_id, pattern, pattern, limit],
+            )
+            rows = cur.fetchall()
         return [
             {
-                "seq": r["seq"],
-                "event_type": r["event_type"],
-                "fragment": r["fragment"],
-                "payload": json.loads(r["payload"]),
+                "seq": row["seq"],
+                "event_type": row["event_type"],
+                "fragment": row["fragment"],
+                "payload": _coerce_json(row["payload"]) or {},
             }
-            for r in rows
+            for row in rows
         ]
 
     def update_session_state(
@@ -199,29 +229,50 @@ class SessionArchive:
         stop_reason: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        if metadata is None:
-            self.db.execute(
-                "UPDATE sessions SET state = ?, stop_reason = ? WHERE session_id = ?",
-                [state, stop_reason, session_id],
-            )
-        else:
-            self.db.execute(
-                "UPDATE sessions SET state = ?, stop_reason = ?, metadata = ? WHERE session_id = ?",
-                [state, stop_reason, json.dumps(metadata, default=str), session_id],
-            )
-        self.db.commit()
+        with self._lock, self.db.cursor() as cur:
+            if metadata is None:
+                cur.execute(
+                    "UPDATE sessions SET state = %s, stop_reason = %s WHERE session_id = %s",
+                    [state, stop_reason, session_id],
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE sessions
+                    SET state = %s, stop_reason = %s, metadata = CAST(%s AS JSONB)
+                    WHERE session_id = %s
+                    """,
+                    [state, stop_reason, json.dumps(metadata, default=str), session_id],
+                )
 
     def load_session(self, session_id: str) -> dict[str, Any] | None:
-        row = self.db.execute(
-            "SELECT * FROM sessions WHERE session_id = ?",
-            [session_id],
-        ).fetchone()
+        with self._lock, self.db.cursor() as cur:
+            cur.execute("SELECT * FROM sessions WHERE session_id = %s", [session_id])
+            row = cur.fetchone()
         if row is None:
             return None
         result = dict(row)
-        if result.get("metadata"):
-            result["metadata"] = json.loads(result["metadata"])
+        result["metadata"] = _coerce_json(result.get("metadata")) or {}
         return result
+
+    def list_session_ids_for_user(self, owner_user_id: str) -> list[str]:
+        with self._lock, self.db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT session_id
+                FROM sessions
+                WHERE owner_user_id = %s
+                ORDER BY created_at DESC
+                """,
+                [owner_user_id],
+            )
+            rows = cur.fetchall()
+        return [str(row["session_id"]) for row in rows]
+
+    def delete_session(self, session_id: str) -> None:
+        with self._lock, self.db.cursor() as cur:
+            cur.execute("DELETE FROM sessions WHERE session_id = %s", [session_id])
+        self._seq_cache.pop(session_id, None)
 
     def close(self) -> None:
         self.db.close()

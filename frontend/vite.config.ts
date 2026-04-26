@@ -16,6 +16,7 @@ export default defineConfig({
     proxy: {
       "/auth": { target: API_TARGET, changeOrigin: true },
       "/sessions": { target: API_TARGET, changeOrigin: true },
+      "/wealth": { target: API_TARGET, changeOrigin: true },
       "/health": { target: API_TARGET, changeOrigin: true },
     },
   },

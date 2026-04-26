@@ -7,7 +7,6 @@ from skill_packs.base import SkillPack, ToolHandler
 from skill_packs.stock_strategy.tools import (
     fetch_market_data,
     compute_indicator,
-    generate_chart,
     run_backtest,
     write_strategy,
     compare_strategies,
@@ -28,7 +27,7 @@ class StockStrategySkill(SkillPack):
         return [
             # Domain
             "stock", "stocks", "crypto", "cryptocurrency", "bitcoin", "ethereum",
-            "trading", "strategy", "backtest", "portfolio", "invest", "investment",
+            "trading", "strategy", "backtest", "portfolio",
             "price", "chart", "candlestick", "indicator", "signal", "market",
             "analyze", "analysis", "ticker", "symbol",
             # Tickers
@@ -43,6 +42,8 @@ class StockStrategySkill(SkillPack):
             # Indicators
             "rsi", "macd", "bollinger", "moving average", "sma", "ema",
             "oversold", "overbought", "sharpe", "drawdown",
+            # Research / briefing phrasing
+            "brief", "briefing", "research", "report", "report on",
         ]
 
     def get_tools(self) -> list[tuple[ToolDef, ToolHandler]]:
@@ -90,26 +91,6 @@ class StockStrategySkill(SkillPack):
                     tool_group=ToolGroup.SKILL,
                 ),
                 compute_indicator,
-            ),
-            # generate_chart
-            (
-                ToolDef(
-                    name="generate_chart",
-                    description="Generate a candlestick chart with indicators. Saves as PNG to charts/ directory.",
-                    parameters=[
-                        ToolParameter(name="symbol", type="string", description="Ticker symbol"),
-                        ToolParameter(name="period", type="string", description="Data period", required=False, default="6mo"),
-                        ToolParameter(name="indicators", type="string",
-                                      description="Comma-separated indicators to overlay (e.g. 'sma_20,sma_50,volume,rsi')",
-                                      required=False, default="sma_20,sma_50,volume"),
-                        ToolParameter(name="chart_type", type="string", description="Chart type",
-                                      required=False, enum=["candle", "ohlc", "line"], default="candle"),
-                    ],
-                    requires_confirmation=False,
-                    is_networked=True,
-                    tool_group=ToolGroup.SKILL,
-                ),
-                generate_chart,
             ),
             # run_backtest
             (

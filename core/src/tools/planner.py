@@ -5,10 +5,10 @@ It lives in Zone 1 (always pinned in context) and is persisted as session
 events for crash recovery.
 
 Runtime-enforced constraints (not prompt-dependent):
-  - Status progression: pending → in_progress → done|blocked
-  - Done is done: completed tasks cannot revert
+  - Status progression: pending → in_progress → completed|failed
+  - Completed is completed: completed tasks cannot revert
   - Root-goal immutability: first task cannot be deleted
-  - Dependency enforcement: can't start a task before deps are done
+  - Dependency enforcement: can't start a task before deps are completed
   - Replan budget: max 3 full todo_write calls per session
 """
 
@@ -21,13 +21,13 @@ from agent.core.models import ToolDef, ToolGroup, ToolParameter
 from tools.base import BuiltinTool
 
 
-VALID_STATUSES = {"pending", "in_progress", "done", "blocked"}
+VALID_STATUSES = {"pending", "in_progress", "completed", "failed"}
 
 VALID_TRANSITIONS = {
     "pending": ["in_progress"],
-    "in_progress": ["done", "blocked"],
-    "blocked": ["in_progress"],
-    "done": [],  # terminal
+    "in_progress": ["completed", "failed"],
+    "completed": [],  # terminal
+    "failed": [],  # terminal
 }
 
 VALID_PHASES = {"read", "write", "compute", "verify", "open"}
@@ -55,7 +55,7 @@ class PlanManager:
         self._root_id: str | None = None
 
     def write(self, tasks: list[dict[str, Any]]) -> str:
-        """Create or replace the plan. Enforces done-is-done and root immutability."""
+        """Create or replace the plan. Enforces completed-is-completed and root immutability."""
         self.create_count += 1
         if self.create_count > MAX_CREATES:
             return (
@@ -66,8 +66,9 @@ class PlanManager:
         for task_dict in tasks:
             tid = task_dict.get("id", "")
             old = self.tasks.get(tid)
-            if old and old.status == "done" and task_dict.get("status") != "done":
-                return f"Error: task '{tid}' is already done and cannot be reverted."
+            new_status = _normalize_status(task_dict.get("status", "pending"))
+            if old and old.status == "completed" and new_status != "completed":
+                return f"Error: task '{tid}' is already completed and cannot be reverted."
 
         if self._root_id is not None:
             new_ids = {t.get("id") for t in tasks}
@@ -79,10 +80,10 @@ class PlanManager:
             phase = task_dict.get("phase", "open")
             if phase not in VALID_PHASES:
                 phase = "open"
-            status = task_dict.get("status", "pending")
+            status = _normalize_status(task_dict.get("status", "pending"))
             old = self.tasks.get(task_dict["id"])
-            if old and old.status == "done":
-                status = "done"
+            if old and old.status == "completed":
+                status = "completed"
             new_tasks[task_dict["id"]] = PlanTask(
                 id=task_dict["id"],
                 title=task_dict.get("title", ""),
@@ -101,6 +102,7 @@ class PlanManager:
 
     def update(self, task_id: str, status: str, note: str = "") -> str:
         """Update a task's status. Enforces transitions and dependencies."""
+        status = _normalize_status(status)
         task = self.tasks.get(task_id)
         if task is None:
             return f"Error: unknown task '{task_id}'."
@@ -115,8 +117,8 @@ class PlanManager:
         if status == "in_progress":
             for dep_id in task.depends_on:
                 dep = self.tasks.get(dep_id)
-                if dep and dep.status != "done":
-                    return f"Error: dependency '{dep_id}' ({dep.title}) must be done first."
+                if dep and dep.status != "completed":
+                    return f"Error: dependency '{dep_id}' ({dep.title}) must be completed first."
 
         task.status = status
         if note:
@@ -129,19 +131,19 @@ class PlanManager:
             return "No plan created yet. Call todo_write to create one."
 
         status_icons = {
-            "done": "\u2705",
+            "completed": "\u2705",
             "in_progress": "\u23f3",
             "pending": "\u23f8\ufe0f",
-            "blocked": "\u26d4",
+            "failed": "\u26d4",
         }
         lines = [f"## Current Plan ({self.create_count}/{MAX_CREATES} creates used)\n"]
         for task in self.tasks.values():
             icon = status_icons.get(task.status, "?")
             dep_str = ""
-            if task.depends_on and task.status in ("pending", "blocked"):
+            if task.depends_on and task.status in ("pending", "failed"):
                 dep_str = f" (depends: {', '.join(task.depends_on)})"
             acc_str = ""
-            if task.acceptance and task.status != "done":
+            if task.acceptance and task.status != "completed":
                 acc_str = f'\n     acceptance: "{task.acceptance}"'
             note_str = ""
             if task.note:
@@ -179,6 +181,7 @@ class PlanManager:
                 self.create_count = payload.get("create_count", self.create_count)
                 self.tasks = {}
                 for t in payload.get("tasks", []):
+                    t["status"] = _normalize_status(t.get("status", "pending"))
                     self.tasks[t["id"]] = PlanTask(**t)
                 if not self._root_id and self.tasks:
                     self._root_id = next(iter(self.tasks))
@@ -186,7 +189,7 @@ class PlanManager:
                 p = ev["payload"]
                 task = self.tasks.get(p.get("task_id"))
                 if task:
-                    task.status = p.get("status", task.status)
+                    task.status = _normalize_status(p.get("status", task.status))
                     task.note = p.get("note", task.note)
 
 
@@ -197,7 +200,7 @@ class TodoWriteTool(BuiltinTool):
     name = "todo_write"
     description = (
         "Create or replace the task plan. Each task needs: id, title. "
-        "Optional: phase (read/write/compute/verify/open), acceptance (what done looks like), "
+        "Optional: phase (read/write/compute/verify/open), acceptance (what completed looks like), "
         "depends_on (list of task ids). Max 3 creates per session."
     )
     parameters = [
@@ -231,14 +234,14 @@ class TodoUpdateTool(BuiltinTool):
     name = "todo_update"
     description = (
         "Update a task's status. Valid transitions: "
-        "pending→in_progress, in_progress→done|blocked, blocked→in_progress."
+        "pending→in_progress, in_progress→completed|failed."
     )
     parameters = [
         ToolParameter(name="task_id", type="string", description="Task ID to update"),
         ToolParameter(
             name="status", type="string",
             description="New status",
-            enum=["in_progress", "done", "blocked"],
+            enum=["in_progress", "completed", "failed"],
         ),
         ToolParameter(name="note", type="string", description="Optional progress note", required=False),
     ]
@@ -283,3 +286,16 @@ def register_plan_tools(plan_manager: PlanManager) -> list[tuple[ToolDef, Any]]:
         instance._plan_manager = plan_manager
         tools.append((instance.to_tool_def(), instance.execute))
     return tools
+
+
+def _normalize_status(value: Any) -> str:
+    raw = str(value or "pending")
+    if raw in VALID_STATUSES:
+        return raw
+    if raw == "done":
+        return "completed"
+    if raw == "blocked":
+        return "pending"
+    if raw in {"cancelled", "skipped"}:
+        return "failed"
+    return "pending"

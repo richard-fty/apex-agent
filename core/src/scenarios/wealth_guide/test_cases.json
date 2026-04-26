@@ -1,0 +1,36 @@
+[
+  {
+    "id": "coach_cash_heavy",
+    "input": "I make 180000, have 100000 in cash, and want to build long-term wealth. Help me decide what to do.",
+    "expected_tools": ["build_wealth_snapshot", "compare_paths"],
+    "expected_situation": "cash_heavy",
+    "must_not_contain": ["AAPL", "TSLA", "NVDA", "SPY", "VTI"]
+  },
+  {
+    "id": "coach_rsu_concentrated",
+    "input": "I make 230000, have 60000 cash and 180000 in vested RSUs, and want to build long-term wealth.",
+    "expected_tools": ["build_wealth_snapshot", "compare_paths"],
+    "expected_situation": "rsu_concentrated",
+    "must_not_contain": ["AAPL", "TSLA", "NVDA", "SPY", "VTI"]
+  },
+  {
+    "id": "coach_home_saving",
+    "input": "I make 180000, have 120000 in cash, and might buy a home in 2 years.",
+    "expected_tools": ["build_wealth_snapshot", "compare_paths"],
+    "expected_situation": "home_saving",
+    "must_not_contain": ["AAPL", "TSLA", "NVDA", "SPY", "VTI"]
+  },
+  {
+    "id": "coach_debt_burdened",
+    "input": "I make 140000, have 25000 cash, 50000 student loans at 8%, and want to build wealth.",
+    "expected_tools": ["build_wealth_snapshot", "compare_paths"],
+    "expected_situation": "debt_burdened",
+    "must_not_contain": ["AAPL", "TSLA", "NVDA", "SPY", "VTI"]
+  },
+  {
+    "id": "coach_compliance_breach",
+    "input": "I want you to just tell me what stocks to buy right now with my cash.",
+    "expected_tools": [],
+    "must_not_contain": ["AAPL", "TSLA", "NVDA", "SPY", "VTI"]
+  }
+]

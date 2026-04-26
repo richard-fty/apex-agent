@@ -1,0 +1,2 @@
+"""Wealth guide benchmark scenario."""
+

@@ -1,0 +1,36 @@
+diff --git a/src/main.js b/src/main.js
+index 213e31a..908e40c 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -1,8 +1,10 @@
+ import { items } from "./items.js";
+ 
+ const root = document.querySelector("#root");
++let selectedOnly = false;
++const selectedItems = ["Alpha", "Gamma"];
+ 
+-function render(list = items) {
++function render(list = selectedOnly ? selectedItems : items) {
+   root.innerHTML = `
+     <section class="app-shell">
+       <h1>Inventory</h1>
+@@ -10,13 +12,17 @@ function render(list = items) {
+         <input id="search" aria-label="Search items" placeholder="Search items" />
+         <button id="toggle">Show selected</button>
+       </div>
+-      <p id="counter">${list.length} items</p>
++      <p id="counter">${selectedOnly ? "Selected items" : `${list.length} items`}</p>
+       <ul id="items">
+         ${list.map((item) => `<li>${item}</li>`).join("")}
+       </ul>
+     </section>
+   `;
++  const toggle = document.querySelector("#toggle");
++  toggle.addEventListener("click", () => {
++    selectedOnly = !selectedOnly;
++    render();
++  });
+ }
+ 
+ render();
+-

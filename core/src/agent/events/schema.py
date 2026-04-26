@@ -24,7 +24,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, TypeAdapter
 
-from agent.core.models import TokenUsage
+from agent.core.models import TodoStatus, TokenUsage
 
 
 # ---------------------------------------------------------------------------
@@ -37,11 +37,15 @@ class ArtifactKind(str, Enum):
     MARKDOWN = "markdown"
     TEXT = "text"
     JSON = "json"
+    WEALTH_SNAPSHOT = "wealth_snapshot"
+    PATH_COMPARISON = "path_comparison"
+    ACTION_CHECKLIST = "action_checklist"
     IMAGE = "image"
     PDF = "pdf"
     FILE = "file"
     TERMINAL_LOG = "terminal_log"
     PLAN = "plan"
+    APP_PREVIEW = "app_preview"
 
 
 class ArtifactPatchOp(str, Enum):
@@ -49,10 +53,21 @@ class ArtifactPatchOp(str, Enum):
     REPLACE = "replace"
 
 
-class PlanStep(BaseModel):
+class TodoItem(BaseModel):
     id: str
     text: str
-    status: Literal["pending", "in_progress", "completed", "cancelled"] = "pending"
+    status: TodoStatus = "pending"
+
+
+PlanStep = TodoItem
+
+
+class SearchResultCard(BaseModel):
+    title: str
+    url: str
+    snippet: str = ""
+    source: str | None = None
+    timestamp: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +157,12 @@ class PlanUpdated(AgentEventBase):
     steps: list[PlanStep]
 
 
+class EducationDisclaimer(AgentEventBase):
+    type: Literal["education_disclaimer"] = "education_disclaimer"
+    message: str
+    scope: Literal["education"] = "education"
+
+
 # ---------------------------------------------------------------------------
 # Tool events
 # ---------------------------------------------------------------------------
@@ -162,6 +183,7 @@ class ToolFinished(AgentEventBase):
     success: bool
     duration_ms: float
     content: str = ""
+    search_results: list[SearchResultCard] = Field(default_factory=list)
 
 
 class ToolDenied(AgentEventBase):
@@ -282,6 +304,7 @@ AgentEvent = Annotated[
         AssistantNote,
         SkillAutoLoaded,
         PlanUpdated,
+        EducationDisclaimer,
         ToolStarted,
         ToolFinished,
         ToolDenied,

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "lt1_brief_nvda",
+    "tier": "LT1",
+    "ability": "long_horizon_composition",
+    "difficulty": "hard",
+    "skill_packs": ["stock_strategy"],
+    "input": "Brief me on NVDA.",
+    "expected_tools": [
+      "web_research",
+      "fetch_market_data",
+      "compute_indicator",
+      "generate_chart",
+      "write_file",
+      "run_command"
+    ],
+    "forbidden_tools": ["rm", "web_fetch", "web_search"],
+    "artifact_path": "results/lt1_briefing/NVDA_briefing.docx",
+    "supporting_artifacts": [
+      "results/lt1_briefing/render.py",
+      "results/lt1_briefing/NVDA_chart.png"
+    ],
+    "docx_required_headings": [
+      "Executive Summary",
+      "Price & Indicators",
+      "News & Catalysts",
+      "Risks",
+      "Sources"
+    ],
+    "min_inline_images": 1,
+    "min_hyperlinks": 5,
+    "max_web_research_calls": 3,
+    "max_steps": 30,
+    "budget_usd": 1.5,
+    "timeout_sec": 300,
+    "description": "LT1: equity briefing as a Word doc, using the combined web_research tool and the stock_strategy skill."
+  }
+]

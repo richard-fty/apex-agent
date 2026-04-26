@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Timer App</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(145deg, #0f0f1a 0%, #1a1a2e 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: #e0e0e0;
+    }
+
+    .container {
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 32px;
+      padding: 40px;
+      width: 460px;
+      max-width: 94vw;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* -------- Mode Tabs -------- */
+    .tabs {
+      display: flex;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 14px;
+      padding: 4px;
+      margin-bottom: 30px;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 10px 0;
+      text-align: center;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.45);
+      transition: all 0.25s ease;
+    }
+
+    .tab.active {
+      background: rgba(99, 102, 241, 0.3);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+    }
+
+    .tab:hover:not(.active) {
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    /* -------- Display -------- */
+    .display {
+      font-size: 72px;
+      font-weight: 300;
+      text-align: center;
+      letter-spacing: 6px;
+      font-variant-numeric: tabular-nums;
+      margin: 16px 0 8px;
+      color: #fff;
+      text-shadow: 0 0 40px rgba(99, 102, 241, 0.2);
+      transition: color 0.3s ease;
+    }
+
+    .display.running {
+      color: #a5b4fc;
+    }
+
+    .display.ended {
+      color: #f87171;
+      animation: pulse 0.6s ease-in-out 3;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .phase-label {
+      text-align: center;
+      font-size: 13px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      min-height: 24px;
+      margin-bottom: 8px;
+      color: rgba(255, 255, 255, 0.3);
+    }
+
+    .phase-label.highlight {
+      color: #818cf8;
+    }
+
+    /* -------- Input row (countdown / interval) -------- */
+    .input-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin: 20px 0 18px;
+    }
+
+    .input-row input {
+      width: 70px;
+      padding: 10px 0;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      font-size: 22px;
+      font-weight: 400;
+      color: #fff;
+      outline: none;
+      transition: border 0.2s;
+    }
+
+    .input-row input:focus {
+      border-color: #818cf8;
+    }
+
+    .input-row input::placeholder {
+      color: rgba(255, 255, 255, 0.2);
+    }
+
+    .input-row label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: rgba(255, 255, 255, 0.35);
+    }
+
+    .input-row input::-webkit-outer-spin-button,
+    .input-row input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .input-row input[type=number] {
+      -moz-appearance: textfield;
+    }
+
+    /* -------- Controls -------- */
+    .controls {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin: 22px 0 0;
+    }
+
+    .controls button {
+      flex: 1;
+      max-width: 140px;
+      padding: 14px 0;
+      border: none;
+      border-radius: 14px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.2s, opacity 0.2s;
+    }
+
+    .controls button:active {
+      transform: scale(0.96);
+    }
+
+    .controls button:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-start {
+      background: #6366f1;
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    }
+    .btn-start:hover:not(:disabled) {
+      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+    }
+
+    .btn-pause {
+      background: #f59e0b;
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(245, 158, 11, 0.3);
+    }
+    .btn-pause:hover:not(:disabled) {
+      box-shadow: 0 6px 20px rgba(245, 158, 11, 0.45);
+    }
+
+    .btn-reset {
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+    .btn-reset:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    /* -------- Interval extra -------- */
+    .interval-settings {
+      margin-top: 18px;
+      display: none;
+    }
+
+    .interval-settings.visible {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .interval-settings label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: rgba(255, 255, 255, 0.35);
+    }
+
+    .interval-settings input {
+      width: 54px;
+      padding: 8px 0;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      font-size: 18px;
+      color: #fff;
+      outline: none;
+    }
+    .interval-settings input:focus {
+      border-color: #818cf8;
+    }
+
+    .round-counter {
+      text-align: center;
+      font-size: 13px;
+      margin-top: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      min-height: 22px;
+    }
+
+    /* -------- Footer / small -------- */
+    .footer-note {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.15);
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="app">
+
+    <h1>⏱ Timer</h1>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-mode="countdown">Countdown</button>
+      <button class="tab" data-mode="stopwatch">Stopwatch</button>
+      <button class="tab" data-mode="interval">Interval</button>
+    </div>
+
+    <!-- Display -->
+    <div class="phase-label" id="phaseLabel">&nbsp;</div>
+    <div class="display" id="display">00:00</div>
+
+    <!-- Countdown / Interval input -->
+    <div class="input-row" id="inputRow">
+      <label>Min <input type="number" id="inputMin" value="5" min="0" max="999" /></label>
+      <label>Sec <input type="number" id="inputSec" value="0" min="0" max="59" /></label>
+    </div>
+
+    <!-- Interval specific settings -->
+    <div class="interval-settings" id="intervalSettings">
+      <label>Work <input type="number" id="workSec" value="30" min="1" max="599" /></label>
+      <label>Rest <input type="number" id="restSec" value="10" min="1" max="599" /></label>
+      <label>Rounds <input type="number" id="roundsTotal" value="8" min="1" max="99" /></label>
+    </div>
+    <div class="round-counter" id="roundCounter">&nbsp;</div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button class="btn-start" id="btnStart">Start</button>
+      <button class="btn-pause" id="btnPause" disabled>Pause</button>
+      <button class="btn-reset" id="btnReset">Reset</button>
+    </div>
+
+    <div class="footer-note">press <kbd>Space</kbd> to start / pause</div>
+  </div>
+
+  <script>
+    (function () {
+      // ---- DOM refs ----
+      const displayEl = document.getElementById('display');
+      const phaseLabel = document.getElementById('phaseLabel');
+      const inputMin = document.getElementById('inputMin');
+      const inputSec = document.getElementById('inputSec');
+      const inputRow = document.getElementById('inputRow');
+
+      const btnStart = document.getElementById('btnStart');
+      const btnPause = document.getElementById('btnPause');
+      const btnReset = document.getElementById('btnReset');
+
+      const tabs = document.querySelectorAll('.tab');
+      const intervalSettings = document.getElementById('intervalSettings');
+      const workSec = document.getElementById('workSec');
+      const restSec = document.getElementById('restSec');
+      const roundsTotal = document.getElementById('roundsTotal');
+      const roundCounter = document.getElementById('roundCounter');
+
+      // ---- State ----
+      let mode = 'countdown';           // 'countdown' | 'stopwatch' | 'interval'
+      let status = 'idle';              // 'idle' | 'running' | 'paused' | 'ended'
+      let intervalId = null;
+
+      // Countdown / Stopwatch state
+      let remainingMs = 0;              // countdown / interval
+      let elapsedMs = 0;               // stopwatch
+
+      // Interval state
+      let isWork = true;
+      let currentRound = 1;
+      let roundsTotalVal = 8;
+
+      // ---- Helpers ----
+      function formatTime(ms) {
+        if (ms < 0) ms = 0;
+        const totalSec = Math.floor(ms / 1000);
+        const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+        const s = String(totalSec % 60).padStart(2, '0');
+        return `${m}:${s}`;
+      }
+
+      function msToHms(ms) {
+        if (ms < 0) ms = 0;
+        const totalSec = Math.floor(ms / 1000);
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        return { m, s };
+      }
+
+      function fromMinutesSeconds(min, sec) {
+        return (min * 60 + sec) * 1000;
+      }
+
+      function getCountdownMs() {
+        const m = parseInt(inputMin.value) || 0;
+        const s = parseInt(inputSec.value) || 0;
+        return fromMinutesSeconds(m, s);
+      }
+
+      function updateDisplay(valueMs) {
+        displayEl.textContent = formatTime(valueMs);
+      }
+
+      function setDisplayClass(cls) {
+        displayEl.className = 'display' + (cls ? ' ' + cls : '');
+      }
+
+      function setPhaseText(text, highlight) {
+        phaseLabel.textContent = text || '\u00A0';
+        if (highlight) {
+          phaseLabel.classList.add('highlight');
+        } else {
+          phaseLabel.classList.remove('highlight');
+        }
+      }
+
+      function stopTimer() {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      }
+
+      function setInputsEnabled(enabled) {
+        inputMin.disabled = !enabled;
+        inputSec.disabled = !enabled;
+        workSec.disabled = !enabled;
+        restSec.disabled = !enabled;
+        roundsTotal.disabled = !enabled;
+      }
+
+      // ---- UI update based on mode ----
+      function updateInputsVisibility() {
+        if (mode === 'interval') {
+          inputRow.style.display = 'none';
+          intervalSettings.classList.add('visible');
+          roundCounter.style.display = 'block';
+        } else {
+          inputRow.style.display = 'flex';
+          intervalSettings.classList.remove('visible');
+          roundCounter.style.display = 'none';
+        }
+      }
+
+      function resetUI(modeChanged) {
+        stopTimer();
+        status = 'idle';
+        setDisplayClass('');
+        btnStart.disabled = false;
+        btnStart.textContent = 'Start';
+        btnPause.disabled = true;
+        setInputsEnabled(true);
+        setPhaseText('');
+
+        if (mode === 'countdown') {
+          remainingMs = getCountdownMs();
+          updateDisplay(remainingMs);
+        } else if (mode === 'stopwatch') {
+          elapsedMs = 0;
+          updateDisplay(0);
+        } else {  // interval
+          isWork = true;
+          currentRound = 1;
+          roundsTotalVal = parseInt(roundsTotal.value) || 8;
+          const workMs = (parseInt(workSec.value) || 30) * 1000;
+          remainingMs = workMs;
+          updateDisplay(remainingMs);
+          setPhaseText('Work', true);
+          roundCounter.textContent = `Round 1 / ${roundsTotalVal}`;
+        }
+      }
+
+      function switchMode(newMode) {
+        if (newMode === mode) return;
+        mode = newMode;
+        updateInputsVisibility();
+        resetUI(true);
+      }
+
+      // ---- Timer tick ----
+      function tick() {
+        if (mode === 'stopwatch') {
+          elapsedMs += 100;
+          updateDisplay(elapsedMs);
+          return;
+        }
+
+        // countdown & interval
+        remainingMs -= 100;
+        if (remainingMs <= 0) {
+          if (mode === 'countdown') {
+            remainingMs = 0;
+            updateDisplay(0);
+            stopTimer();
+            status = 'ended';
+            setDisplayClass('ended');
+            btnStart.disabled = true;
+            btnPause.disabled = true;
+            setInputsEnabled(true);
+            setPhaseText('Time\'s up!', true);
+            return;
+          }
+
+          // ---- Interval mode ----
+          if (isWork) {
+            // Work phase finished -> switch to rest
+            isWork = false;
+            const restMs = (parseInt(restSec.value) || 10) * 1000;
+            remainingMs = restMs;
+            updateDisplay(remainingMs);
+            setPhaseText('Rest', false);
+          } else {
+            // Rest phase finished
+            currentRound++;
+            if (currentRound > roundsTotalVal) {
+              // All rounds complete
+              remainingMs = 0;
+              updateDisplay(0);
+              stopTimer();
+              status = 'ended';
+              setDisplayClass('ended');
+              btnStart.disabled = true;
+              btnPause.disabled = true;
+              setInputsEnabled(true);
+              setPhaseText('Workout Complete!', true);
+              roundCounter.textContent = `Finished!`;
+              return;
+            }
+            // Start next work round
+            isWork = true;
+            const workMs = (parseInt(workSec.value) || 30) * 1000;
+            remainingMs = workMs;
+            updateDisplay(remainingMs);
+            setPhaseText('Work', true);
+            roundCounter.textContent = `Round ${currentRound} / ${roundsTotalVal}`;
+          }
+        } else {
+          updateDisplay(remainingMs);
+        }
+      }
+
+      // ---- Actions ----
+      function start() {
+        if (status === 'ended') {
+          // Reset first
+          resetUI(false);
+        }
+
+        status = 'running';
+        setDisplayClass('running');
+        btnStart.textContent = 'Start';
+        btnStart.disabled = true;
+        btnPause.disabled = false;
+        setInputsEnabled(false);
+
+        if (mode === 'countdown') {
+          if (remainingMs <= 0) {
+            remainingMs = getCountdownMs();
+            updateDisplay(remainingMs);
+          }
+          setPhaseText('Running');
+        } else if (mode === 'stopwatch') {
+          setPhaseText('Running');
+        } else if (mode === 'interval') {
+          if (remainingMs <= 0) {
+            isWork = true;
+            currentRound = 1;
+            roundsTotalVal = parseInt(roundsTotal.value) || 8;
+            const workMs = (parseInt(workSec.value) || 30) * 1000;
+            remainingMs = workMs;
+            updateDisplay(remainingMs);
+            roundCounter.textContent = `Round ${currentRound} / ${roundsTotalVal}`;
+            setPhaseText('Work', true);
+          }
+        }
+
+        if (intervalId) clearInterval(intervalId);
+        intervalId = setInterval(tick, 100);
+      }
+
+      function pause() {
+        if (status !== 'running') return;
+        stopTimer();
+        status = 'paused';
+        setDisplayClass('');
+        btnStart.disabled = false;
+        btnStart.textContent = 'Resume';
+        btnPause.disabled = true;
+        setInputsEnabled(false);
+        setPhaseText('Paused', false);
+      }
+
+      function reset() {
+        resetUI(false);
+      }
+
+      // ---- Event bindings ----
+      // Tabs
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          tabs.forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          switchMode(tab.dataset.mode);
+        });
+      });
+
+      btnStart.addEventListener('click', start);
+      btnPause.addEventListener('click', pause);
+      btnReset.addEventListener('click', reset);
+
+      // Keyboard shortcut
+      document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+          e.preventDefault();
+          if (status === 'running') {
+            pause();
+          } else {
+            start();
+          }
+        }
+      });
+
+      // Prevent Enter on inputs from doing anything weird
+      document.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') e.preventDefault();
+        });
+      });
+
+      // ---- Init ----
+      updateInputsVisibility();
+      remainingMs = getCountdownMs();
+      updateDisplay(remainingMs);
+      setPhaseText('');
+    })();
+  </script>
+</body>
+</html>

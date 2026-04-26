@@ -24,6 +24,13 @@ export async function getJSON<T>(path: string): Promise<T> {
   return res.json();
 }
 
+export async function getJSONOrNull<T>(path: string): Promise<T | null> {
+  const res = await fetch(path, { credentials: "include" });
+  if (res.status === 404) return null;
+  await handle(res);
+  return res.json();
+}
+
 export async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",

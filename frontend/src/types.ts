@@ -2,13 +2,22 @@
 
 export type ArtifactKind =
   | "code" | "markdown" | "text" | "json"
-  | "image" | "pdf" | "file" | "terminal_log" | "plan";
+  | "wealth_snapshot" | "path_comparison" | "action_checklist"
+  | "image" | "pdf" | "file" | "terminal_log" | "plan" | "app_preview";
 
 export interface AgentEventBase {
   session_id: string;
   turn_id: string | null;
   seq: number;
   timestamp: number;
+}
+
+export interface SearchResultCard {
+  title: string;
+  url: string;
+  snippet: string;
+  source?: string | null;
+  timestamp?: string | null;
 }
 
 export type AgentEvent =
@@ -20,10 +29,11 @@ export type AgentEvent =
   | (AgentEventBase & { type: "assistant_token"; text: string })
   | (AgentEventBase & { type: "assistant_message"; content: string })
   | (AgentEventBase & { type: "assistant_note"; text: string })
+  | (AgentEventBase & { type: "education_disclaimer"; message: string; scope: "education" })
   | (AgentEventBase & { type: "skill_auto_loaded"; skill_name: string })
   | (AgentEventBase & { type: "plan_updated"; steps: PlanStep[] })
   | (AgentEventBase & { type: "tool_started"; step: number; name: string; arguments: Record<string, unknown> })
-  | (AgentEventBase & { type: "tool_finished"; step: number; name: string; arguments: Record<string, unknown>; success: boolean; duration_ms: number; content: string })
+  | (AgentEventBase & { type: "tool_finished"; step: number; name: string; arguments: Record<string, unknown>; success: boolean; duration_ms: number; content: string; search_results?: SearchResultCard[] })
   | (AgentEventBase & { type: "tool_denied"; name: string; reason: string })
   | (AgentEventBase & { type: "approval_requested"; step: number; tool_name: string; reason: string })
   | (AgentEventBase & { type: "approval_resolved"; tool_name: string; action: string })
@@ -43,11 +53,15 @@ export interface TokenUsage {
   cost_usd: number;
 }
 
-export interface PlanStep {
+export type TodoStatus = "pending" | "in_progress" | "completed" | "failed";
+
+export interface TodoItem {
   id: string;
   text: string;
-  status: "pending" | "in_progress" | "completed" | "cancelled";
+  status: TodoStatus;
 }
+
+export type PlanStep = TodoItem;
 
 export interface Session {
   id: string;
@@ -73,9 +87,11 @@ export interface Artifact {
   kind: ArtifactKind;
   name: string;
   language?: string | null;
+  mime?: string | null;
   description?: string | null;
   content: string;
   finalized: boolean;
+  size?: number | null;
 }
 
 export interface ApprovalRequest {
@@ -89,4 +105,73 @@ export interface Skill {
   description: string;
   keywords: string[];
   loaded: boolean;
+}
+
+export interface FinancialProfile {
+  income: number;
+  cash: number;
+  monthly_expenses: number;
+  retirement: number;
+  brokerage: number;
+  rsus: number;
+  home_equity: number;
+  student_loans: number;
+  student_loan_rate: number;
+  credit_card_debt: number;
+  other_debt: number;
+  goals: string[];
+  home_purchase_horizon: string | null;
+}
+
+export interface WealthSnapshot {
+  schema_version: number;
+  income: number;
+  monthly_expenses: number;
+  net_worth: number;
+  liquid_net_worth: number;
+  allocation: {
+    cash: number;
+    retirement: number;
+    brokerage: number;
+    rsus: number;
+    home_equity: number;
+    debt_total: number;
+  };
+  emergency_fund: {
+    months_covered: number;
+    target_months: number;
+  };
+  goals: string[];
+  debt_breakdown: Array<{ name: string; amount: number; rate: number }>;
+  situation: string;
+  flags: string[];
+  ratios: {
+    cash_ratio: number;
+    rsu_ratio: number;
+    debt_ratio: number;
+  };
+}
+
+export interface PathCard {
+  name: string;
+  headline: string;
+  pros: string[];
+  cons: string[];
+  best_for: string;
+  required_concepts: string[];
+}
+
+export interface PathComparison {
+  schema_version: number;
+  snapshot_id: string;
+  situation: string;
+  paths: PathCard[];
+}
+
+export interface ChecklistItemState {
+  artifact_id: string;
+  item_index: number;
+  text: string;
+  completed: boolean;
+  completed_at?: number | null;
 }

@@ -19,7 +19,7 @@ export function PlanCard({ sessionId }: { sessionId: string }) {
 
   const completed = plan.filter((s) => s.status === "completed").length;
   const total = plan.length;
-  const done = completed === total;
+  const allCompleted = completed === total;
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-4">
@@ -30,9 +30,9 @@ export function PlanCard({ sessionId }: { sessionId: string }) {
         >
           <ListChecks className="h-4 w-4 text-muted-foreground" />
           <div className="flex-1 text-left">
-            <div className="text-sm font-medium">Plan</div>
+            <div className="text-sm font-medium">Checklist</div>
             <div className="text-xs text-muted-foreground">
-              {completed} of {total} {done ? "· done" : "complete"}
+              {completed} of {total} {allCompleted ? "completed" : "complete"}
             </div>
           </div>
           <ProgressRing completed={completed} total={total} />
@@ -85,10 +85,10 @@ function statusDetails(status: PlanStep["status"]) {
         icon: <Loader2 className="h-4 w-4 animate-spin text-sky-400" />,
         textClass: "text-foreground",
       };
-    case "cancelled":
+    case "failed":
       return {
         icon: <XCircle className="h-4 w-4 text-destructive" />,
-        textClass: "line-through text-muted-foreground",
+        textClass: "text-destructive",
       };
     default:
       return {

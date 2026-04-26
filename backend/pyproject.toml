@@ -5,6 +5,7 @@ description = "FastAPI HTTP + SSE server for the Apex Agent."
 requires-python = ">=3.11"
 dependencies = [
     "apex-agent-core",
+    "psycopg[binary]>=3.2.0",
     "fastapi>=0.136.0",
     "uvicorn>=0.44.0",
     "argon2-cffi>=25.1.0",

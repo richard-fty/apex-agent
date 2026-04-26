@@ -22,4 +22,18 @@ def discover_skills() -> dict[str, SkillPack]:
     except ImportError:
         pass
 
+    try:
+        from skill_packs.wealth_guide.skill import WealthGuideSkill
+        skill = WealthGuideSkill()
+        available[skill.name] = skill
+    except ImportError:
+        pass
+
+    try:
+        from skill_packs.coding.skill import CodingSkill
+        skill = CodingSkill()
+        available[skill.name] = skill
+    except ImportError:
+        pass
+
     return available

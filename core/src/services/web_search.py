@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 from urllib.parse import quote
 
@@ -9,14 +11,22 @@ import httpx
 
 from config import settings
 
+logger = logging.getLogger(__name__)
+
 
 async def search_web(query: str, *, max_results: int = 5) -> list[dict[str, str]]:
-    """Search the web using Tavily when configured, else fall back to DuckDuckGo."""
-    if settings.tavily_api_key:
-        results = await _search_tavily(query, max_results=max_results)
-        if results:
-            return results
+    """Search the web using Tavily when configured, else fall back to DuckDuckGo.
+
+    When a Tavily API key is configured, keep Tavily as the active provider and
+    do not silently swap search engines on an empty/error result.
+    """
+    if _tavily_api_key():
+        return await _search_tavily(query, max_results=max_results)
     return await _search_duckduckgo(query, max_results=max_results)
+
+
+def _tavily_api_key() -> str:
+    return os.environ.get("TAVILY_API_KEY", "").strip() or settings.tavily_api_key.strip()
 
 
 async def _search_tavily(query: str, *, max_results: int = 5) -> list[dict[str, str]]:
@@ -25,17 +35,22 @@ async def _search_tavily(query: str, *, max_results: int = 5) -> list[dict[str, 
             resp = await client.post(
                 "https://api.tavily.com/search",
                 json={
-                    "api_key": settings.tavily_api_key,
                     "query": query,
                     "max_results": max_results,
                     "search_depth": "basic",
+                    "topic": "general",
                     "include_answer": False,
                     "include_raw_content": False,
                 },
-                headers={"Content-Type": "application/json", "User-Agent": "ApexAgent/0.1"},
+                headers={
+                    "Authorization": f"Bearer {_tavily_api_key()}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "ApexAgent/0.1",
+                },
             )
             resp.raise_for_status()
-    except Exception:
+    except Exception as exc:
+        logger.warning("Tavily search failed for query %r: %s", query, exc)
         return []
 
     data = resp.json()

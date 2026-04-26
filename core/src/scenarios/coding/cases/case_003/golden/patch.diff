@@ -1,0 +1,29 @@
+diff --git a/src/main.js b/src/main.js
+index 213e31a..5cb9a89 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -1,8 +1,9 @@
+ import { items } from "./items.js";
+ 
+ const root = document.querySelector("#root");
++let query = "";
+ 
+-function render(list = items) {
++function render(list = items.filter((item) => item.toLowerCase().includes(query.toLowerCase()))) {
+   root.innerHTML = `
+     <section class="app-shell">
+       <h1>Inventory</h1>
+@@ -16,7 +17,12 @@ function render(list = items) {
+       </ul>
+     </section>
+   `;
++  const search = document.querySelector("#search");
++  search.value = query;
++  search.addEventListener("input", (event) => {
++    query = event.target.value;
++    render();
++  });
+ }
+ 
+ render();
+-

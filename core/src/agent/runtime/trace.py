@@ -52,6 +52,8 @@ class Trace(BaseModel):
     approval_decisions: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_injections: list[dict[str, Any]] = Field(default_factory=list)
     recovery_events: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    gate_results: dict[str, bool] = Field(default_factory=dict)
 
     def add_event(self, event: AgentEvent) -> None:
         """Add an event to the trace."""
@@ -135,6 +137,8 @@ class Trace(BaseModel):
         success: bool,
         duration_ms: float,
         result_size: int,
+        urls: list[str] | None = None,
+        content_preview: str | None = None,
     ) -> None:
         """Record a completed tool call in the normalized ledger."""
         self.tool_calls.append({
@@ -144,6 +148,8 @@ class Trace(BaseModel):
             "success": success,
             "duration_ms": round(duration_ms, 1),
             "result_size": result_size,
+            "urls": urls or [],
+            "content_preview": content_preview or "",
             "timestamp": time.time(),
         })
 

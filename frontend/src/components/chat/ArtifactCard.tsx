@@ -1,5 +1,5 @@
 import { useStore } from "../../store";
-import { FileText, Code2, FileJson, FileBarChart, Terminal, File, Image as ImageIcon } from "lucide-react";
+import { FileText, Code2, FileJson, FileBarChart, Terminal, File, Image as ImageIcon, FileType2 } from "lucide-react";
 import type { ArtifactKind } from "../../types";
 
 function iconFor(kind: ArtifactKind) {
@@ -7,7 +7,11 @@ function iconFor(kind: ArtifactKind) {
     case "markdown": return <FileText className="h-5 w-5" />;
     case "code":     return <Code2 className="h-5 w-5" />;
     case "json":     return <FileJson className="h-5 w-5" />;
+    case "wealth_snapshot": return <FileBarChart className="h-5 w-5" />;
+    case "path_comparison": return <FileBarChart className="h-5 w-5" />;
+    case "action_checklist": return <FileText className="h-5 w-5" />;
     case "image":    return <ImageIcon className="h-5 w-5" />;
+    case "pdf":      return <FileType2 className="h-5 w-5" />;
     case "terminal_log": return <Terminal className="h-5 w-5" />;
     case "plan":     return <FileBarChart className="h-5 w-5" />;
     default:         return <File className="h-5 w-5" />;
@@ -44,7 +48,7 @@ export function ArtifactCard({
 
   if (!artifact) return null;
 
-  const size = new Blob([artifact.content]).size;
+  const size = artifact.size ?? new Blob([artifact.content]).size;
   const subtitle = artifact.description || firstLine(artifact.content);
 
   return (

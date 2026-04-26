@@ -1,5 +1,4 @@
 import { useStore } from "../../store";
-import { Loader2 } from "lucide-react";
 
 /**
  * Live activity strip: shows what the agent is doing RIGHT NOW.
@@ -30,12 +29,13 @@ export function ActivityBar({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-1">
-      <div className="inline-flex items-center gap-2 rounded-full bg-secondary/50 border border-border/60 px-3 py-1 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        <span className="bg-gradient-to-r from-muted-foreground via-foreground to-muted-foreground bg-[length:200%_100%] bg-clip-text text-transparent animate-shimmer">
-          {label}
-        </span>
+    <div className="pt-1">
+      <div className="prose prose-sm prose-invert max-w-none leading-relaxed">
+        <p className="my-0 text-left text-xs font-medium text-muted-foreground">
+          <span className="bg-[linear-gradient(90deg,rgba(148,163,184,0.5)_0%,rgba(255,255,255,0.95)_35%,rgba(148,163,184,0.5)_70%,rgba(255,255,255,0.95)_100%)] bg-[length:260%_100%] bg-clip-text text-transparent animate-shimmer">
+            {label}
+          </span>
+        </p>
       </div>
     </div>
   );

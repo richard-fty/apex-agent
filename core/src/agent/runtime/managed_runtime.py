@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable
+from urllib.parse import urlparse
 
 import litellm
 
@@ -26,6 +29,7 @@ from agent.events import (
     ApprovalResolved,
     AssistantNote,
     AssistantToken,
+    EducationDisclaimer,
     ErrorEvent,
     EventBus,
     InMemoryEventBus,
@@ -41,6 +45,7 @@ from agent.events import (
     TurnStarted,
     UsageEvent,
 )
+from agent.policy.education_compliance import DISCLAIMER_MESSAGE, enforce_education_content
 from agent.events.schema import AgentEvent as TypedAgentEvent
 from agent.runtime.tool_context import ToolContext, tool_context_scope
 from agent.session.archive import SessionArchive
@@ -80,16 +85,28 @@ def _plan_payload_to_steps(payload: dict[str, Any]) -> list[PlanStep]:
     for i, item in enumerate(items):
         if not isinstance(item, dict):
             continue
-        raw_status = str(item.get("status", "pending"))
-        status = raw_status if raw_status in {"pending", "in_progress", "completed", "cancelled"} else "pending"
+        status = _normalize_todo_status(item.get("status", "pending"))
         out.append(
             PlanStep(
                 id=str(item.get("id", i)),
                 text=str(item.get("text", item.get("title", ""))),
-                status=status,  # type: ignore[arg-type]
+                status=status,
             )
         )
     return out
+
+
+def _normalize_todo_status(value: Any) -> str:
+    raw = str(value or "pending")
+    if raw in {"pending", "in_progress", "completed", "failed"}:
+        return raw
+    if raw == "done":
+        return "completed"
+    if raw == "blocked":
+        return "pending"
+    if raw in {"cancelled", "skipped"}:
+        return "failed"
+    return "pending"
 
 
 @dataclass
@@ -239,6 +256,8 @@ class ManagedAgentRuntime:
         self.session.step = 0
         self.session.turn_id = str(uuid.uuid4())
         self._set_cancel_requested(False)
+        self.session.metadata["education_scope_used"] = False
+        self.session.metadata["education_disclaimer_emitted"] = False
         self.session.set_state(AgentState.RUNNING)
         self.session.append_event("user_input_received", user_input=user_input)
         self._persist_session()
@@ -316,6 +335,7 @@ class ManagedAgentRuntime:
 
         tool_call = pending.tool_call
         tool_ms, result_content, result_success = await self._execute_resolved_tool_call(tool_call, resolved)
+        search_results = self._extract_search_results(tool_name=tool_call.name, content=result_content)
         self.session_engine.add_tool_message(tool_call.id, tool_call.name, result_content)
         self.session.append_event(
             "tool_finished",
@@ -324,6 +344,7 @@ class ManagedAgentRuntime:
             success=result_success,
             duration_ms=tool_ms,
             content=result_content,
+            search_results=search_results,
         )
         self.session.append_event(
             "tool_message_added",
@@ -344,6 +365,7 @@ class ManagedAgentRuntime:
                 success=result_success,
                 duration_ms=tool_ms,
                 content=result_content,
+                search_results=search_results,
             )
         )
         yield ManagedEvent(
@@ -354,6 +376,7 @@ class ManagedAgentRuntime:
                 "success": result_success,
                 "duration_ms": tool_ms,
                 "content": result_content,
+                "search_results": search_results,
             },
         )
 
@@ -660,6 +683,9 @@ class ManagedAgentRuntime:
             if full_content and not saw_stream_text:
                 yield ManagedEvent("token", {"text": full_content})
 
+            if self._education_scope_used():
+                full_content, _ = enforce_education_content(full_content)
+
             if full_content:
                 self.session_engine.add_assistant_message({"role": "assistant", "content": full_content})
                 self.session.append_event(
@@ -695,6 +721,14 @@ class ManagedAgentRuntime:
         self.session.append_event("tool_started", step=self.session.step, tool_name=tool_call.name, arguments=tool_call.arguments)
         self._persist_session()
 
+        auto_loaded_skill = self.session_engine.skill_loader.load_skill_for_tool(tool_call.name)
+        if auto_loaded_skill:
+            self.session_engine.rebuild_system_prompt()
+            self.session.append_event("skill_auto_loaded", skill_name=auto_loaded_skill)
+            self._persist_session()
+            await self._publish(SkillAutoLoaded(**self._bus_kwargs(), skill_name=auto_loaded_skill))
+            yield ManagedEvent("skill_auto_loaded", {"skill_name": auto_loaded_skill})
+
         tool_start = time.time()
         if (validation_error := self.session_engine.dispatch.validate_call(tool_call)):
             result_content = self.session_engine.dispatch.retry_prompt(tool_call, validation_error)
@@ -719,6 +753,10 @@ class ManagedAgentRuntime:
                         detail=result_content,
                     )
             elif self.access_controller is not None:
+                if tool_def.compliance_scope == "education":
+                    self._mark_education_scope_used()
+                    async for event in self._emit_education_disclaimer_if_needed():
+                        yield event
                 decision = self.access_controller.evaluate(tool_call, tool_def)
                 if trace is not None:
                     trace.record_approval_decision(
@@ -763,6 +801,10 @@ class ManagedAgentRuntime:
                     return
                 else:
                     tool_ms, result_content, result_success = await self._execute_allowed_tool_call(tool_call)
+                    if tool_def.compliance_scope == "education":
+                        result_content, allowed = enforce_education_content(result_content)
+                        result_success = result_success and allowed
+                    search_results = self._extract_search_results(tool_name=tool_call.name, content=result_content)
                     if not result_success and trace is not None:
                         trace.record_recovery_event(
                             step=self.session.step,
@@ -778,6 +820,7 @@ class ManagedAgentRuntime:
                         success=result_success,
                         duration_ms=tool_ms,
                         content=result_content,
+                        search_results=search_results,
                     )
                     self.session.append_event(
                         "tool_message_added",
@@ -798,6 +841,7 @@ class ManagedAgentRuntime:
                             success=result_success,
                             duration_ms=tool_ms,
                             content=result_content,
+                            search_results=search_results,
                         )
                     )
                     yield ManagedEvent(
@@ -808,11 +852,20 @@ class ManagedAgentRuntime:
                             "success": result_success,
                             "duration_ms": tool_ms,
                             "content": result_content,
+                            "search_results": search_results,
                         },
                     )
                     return
             else:
+                if tool_def.compliance_scope == "education":
+                    self._mark_education_scope_used()
+                    async for event in self._emit_education_disclaimer_if_needed():
+                        yield event
                 tool_ms, result_content, result_success = await self._execute_tool_call(tool_call)
+                if tool_def.compliance_scope == "education":
+                    result_content, allowed = enforce_education_content(result_content)
+                    result_success = result_success and allowed
+                search_results = self._extract_search_results(tool_name=tool_call.name, content=result_content)
                 if not result_success and trace is not None:
                     trace.record_recovery_event(
                         step=self.session.step,
@@ -828,6 +881,7 @@ class ManagedAgentRuntime:
                     success=result_success,
                     duration_ms=tool_ms,
                     content=result_content,
+                    search_results=search_results,
                 )
                 self.session.append_event(
                     "tool_message_added",
@@ -848,6 +902,7 @@ class ManagedAgentRuntime:
                         success=result_success,
                         duration_ms=tool_ms,
                         content=result_content,
+                        search_results=search_results,
                     )
                 )
                 yield ManagedEvent(
@@ -858,12 +913,14 @@ class ManagedAgentRuntime:
                         "success": result_success,
                         "duration_ms": tool_ms,
                         "content": result_content,
+                        "search_results": search_results,
                     },
                 )
                 return
 
         tool_ms = (time.time() - tool_start) * 1000
         result_content = self.session_engine.context_mgr.compact_tool_result(result_content)
+        search_results = self._extract_search_results(tool_name=tool_call.name, content=result_content)
         self.session_engine.add_tool_message(tool_call.id, tool_call.name, result_content)
         self.session.append_event(
             "tool_finished",
@@ -872,6 +929,7 @@ class ManagedAgentRuntime:
             success=result_success,
             duration_ms=tool_ms,
             content=result_content,
+            search_results=search_results,
         )
         self.session.append_event(
             "tool_message_added",
@@ -892,6 +950,7 @@ class ManagedAgentRuntime:
                 success=result_success,
                 duration_ms=tool_ms,
                 content=result_content,
+                search_results=search_results,
             )
         )
         yield ManagedEvent(
@@ -902,6 +961,7 @@ class ManagedAgentRuntime:
                 "success": result_success,
                 "duration_ms": tool_ms,
                 "content": result_content,
+                "search_results": search_results,
             },
         )
 
@@ -909,6 +969,38 @@ class ManagedAgentRuntime:
         if self._cancel_requested():
             return "Run cancelled by user"
         return guard.check()
+
+    def _extract_search_results(
+        self,
+        *,
+        tool_name: str,
+        content: str,
+    ) -> list[dict[str, Any]]:
+        if tool_name != "web_research":
+            return []
+        try:
+            payload = json.loads(content)
+        except Exception:
+            return []
+        results = payload.get("results", [])
+        if not isinstance(results, list):
+            return []
+
+        cards: list[dict[str, Any]] = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url:
+                continue
+            cards.append({
+                "title": str(item.get("title") or url).strip(),
+                "url": url,
+                "snippet": str(item.get("snippet") or "").strip(),
+                "source": urlparse(url).netloc.replace("www.", "") or None,
+                "timestamp": item.get("timestamp"),
+            })
+        return cards
 
     def _cancel_requested(self) -> bool:
         return bool(self.session.metadata.get("cancel_requested", False))
@@ -965,6 +1057,17 @@ class ManagedAgentRuntime:
     ) -> str:
         if event.type == "llm_call_started":
             callback(AgentEvent(type=EventType.LLM_CALL_START, step=self.session.step, data=event.data))
+        elif event.type == "education_disclaimer":
+            trace.add_event(AgentEvent(
+                type=EventType.COMPLIANCE_NOTICE,
+                step=self.session.step,
+                data=event.data,
+            ))
+            callback(AgentEvent(
+                type=EventType.COMPLIANCE_NOTICE,
+                step=self.session.step,
+                data=event.data,
+            ))
         elif event.type == "usage":
             usage = event.data["usage"]
             trace.add_llm_usage(usage)
@@ -981,12 +1084,16 @@ class ManagedAgentRuntime:
         elif event.type == "tool_started":
             callback(AgentEvent(type=EventType.TOOL_CALL_START, step=self.session.step, data=event.data))
         elif event.type == "tool_finished":
+            content_preview = event.data.get("content", "")[:400]
+            urls = re.findall(r"https?://[^\s\"'<>]+", event.data.get("content", ""))
             trace.add_event(AgentEvent(
                 type=EventType.TOOL_CALL_END,
                 step=self.session.step,
                 data={
                     "name": event.data["name"],
                     "success": event.data["success"],
+                    "content_preview": content_preview,
+                    "urls": urls[:20],
                     "duration_ms": round(event.data["duration_ms"], 1),
                 },
             ))
@@ -996,7 +1103,8 @@ class ManagedAgentRuntime:
                 data={
                     "name": event.data["name"],
                     "success": event.data["success"],
-                    "content_preview": event.data["content"][:200],
+                    "content_preview": content_preview,
+                    "urls": urls[:20],
                     "duration_ms": round(event.data["duration_ms"], 1),
                 },
             ))
@@ -1007,6 +1115,8 @@ class ManagedAgentRuntime:
                 success=event.data["success"],
                 duration_ms=event.data["duration_ms"],
                 result_size=len(event.data.get("content", "")),
+                urls=urls[:20],
+                content_preview=content_preview,
             )
         elif event.type == "turn_finished":
             final_content = event.data.get("content", "")
@@ -1017,6 +1127,34 @@ class ManagedAgentRuntime:
                 data={"output_preview": final_content[:200]},
             ))
         return final_content
+
+    def _education_scope_used(self) -> bool:
+        return bool(self.session.metadata.get("education_scope_used", False))
+
+    def _mark_education_scope_used(self) -> None:
+        self.session.metadata["education_scope_used"] = True
+
+    async def _emit_education_disclaimer_if_needed(self) -> AsyncIterator[ManagedEvent]:
+        if self.session.metadata.get("education_disclaimer_emitted", False):
+            return
+        self.session.metadata["education_disclaimer_emitted"] = True
+        self.session.append_event(
+            "education_disclaimer",
+            message=DISCLAIMER_MESSAGE,
+            scope="education",
+        )
+        self._persist_session()
+        await self._publish(
+            EducationDisclaimer(
+                **self._bus_kwargs(),
+                message=DISCLAIMER_MESSAGE,
+                scope="education",
+            )
+        )
+        yield ManagedEvent(
+            "education_disclaimer",
+            {"message": DISCLAIMER_MESSAGE, "scope": "education"},
+        )
 
     def _persist_session(self) -> None:
         if self.archive is not None:

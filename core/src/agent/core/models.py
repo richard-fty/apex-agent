@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -66,6 +66,10 @@ class ToolParameter(BaseModel):
     default: Any = None
 
 
+TodoStatus = Literal["pending", "in_progress", "completed", "failed"]
+"""Minimum TodoItem status vocabulary shared across backend and frontend."""
+
+
 class ToolGroup(str, Enum):
     CORE = "core"
     SKILL = "skill"
@@ -111,6 +115,7 @@ class ToolDef(BaseModel):
     visible: bool = True
     shell_command_arg: str | None = None
     path_access: str | None = None
+    compliance_scope: str | None = None
 
     def to_openai_schema(self) -> dict[str, Any]:
         """Convert to OpenAI function-calling schema."""
@@ -210,6 +215,7 @@ class EventType(str, Enum):
     LLM_CALL_START = "llm_call_start"
     LLM_STREAM_TOKEN = "llm_stream_token"
     LLM_CALL_END = "llm_call_end"
+    COMPLIANCE_NOTICE = "compliance_notice"
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_END = "tool_call_end"
     CONTEXT_COMPACTION = "context_compaction"

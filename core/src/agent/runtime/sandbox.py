@@ -40,6 +40,15 @@ class BaseSandbox:
     async def run_command(self, command: str, timeout: int) -> SandboxCommandResult:
         raise NotImplementedError
 
+    async def run_oneshot(
+        self,
+        command: str,
+        timeout: int,
+        *,
+        network: str = "none",
+    ) -> SandboxCommandResult:
+        return await self.run_command(command, timeout)
+
     def read_file(self, path: str, *, encoding: str = "utf-8") -> str:
         raise NotImplementedError
 
@@ -118,6 +127,17 @@ class LocalSandbox(BaseSandbox):
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
             return SandboxCommandResult(stdout="", stderr="", exit_code=124, timed_out=True)
+
+    async def run_oneshot(
+        self,
+        command: str,
+        timeout: int,
+        *,
+        network: str = "none",
+    ) -> SandboxCommandResult:
+        # Local fallback cannot enforce network boundaries; it still runs with
+        # the same scrubbed environment and disposable HOME as run_command.
+        return await self.run_command(command, timeout)
 
     def read_file(self, path: str, *, encoding: str = "utf-8") -> str:
         return Path(path).resolve().read_text(encoding=encoding, errors="replace")
@@ -215,6 +235,48 @@ class DockerSandbox(BaseSandbox):
         cid = self._assert_provisioned()
         proc = await asyncio.create_subprocess_exec(
             "docker", "exec", cid, "sh", "-c", command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return SandboxCommandResult(
+                stdout=stdout.decode("utf-8", errors="replace"),
+                stderr=stderr.decode("utf-8", errors="replace"),
+                exit_code=proc.returncode,
+            )
+        except asyncio.TimeoutError:
+            with contextlib.suppress(Exception):
+                proc.kill()
+            return SandboxCommandResult(stdout="", stderr="", exit_code=124, timed_out=True)
+
+    async def run_oneshot(
+        self,
+        command: str,
+        timeout: int,
+        *,
+        network: str = "none",
+    ) -> SandboxCommandResult:
+        argv = [
+            "docker", "run", "--rm",
+            "--memory", "1g",
+            "--cpus", "1",
+            "--network", network,
+            "--workdir", self.work_dir,
+            "--user", f"{os.getuid()}:{os.getgid()}",
+            "--env", f"HOME={self.work_dir}",
+            "--env", "PNPM_STORE_DIR=/pnpm-store",
+            "--env-file", "/dev/null",
+        ]
+        for mount in self.mounts:
+            mode = "ro" if mount.read_only else "rw"
+            argv.extend(["-v", f"{mount.source}:{mount.target}:{mode}"])
+        pnpm_store = Path.home() / ".local/share/pnpm/store"
+        if pnpm_store.exists():
+            argv.extend(["-v", f"{pnpm_store}:/pnpm-store:rw"])
+        argv.extend([self.image, "sh", "-c", command])
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

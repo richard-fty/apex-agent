@@ -67,7 +67,7 @@ _DEFAULT_MODELS: dict[str, str] = {
 class Settings(BaseSettings):
     """Global application settings loaded from environment / .env file."""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     # LLM provider selection (auto-configures default model)
     llm_provider: str = Field(default="deepseek", alias="LLM_PROVIDER")

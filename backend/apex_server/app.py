@@ -15,6 +15,7 @@ from apex_server.routes.events_routes import router as events_router
 from apex_server.routes.sessions_routes import router as sessions_router
 from apex_server.routes.skills_routes import router as skills_router
 from apex_server.routes.turns_routes import router as turns_router
+from apex_server.routes.wealth_routes import router as wealth_router
 
 
 def create_app(state: AppState | None = None) -> FastAPI:
@@ -56,6 +57,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
     app.include_router(events_router)
     app.include_router(artifacts_router)
     app.include_router(skills_router)
+    app.include_router(wealth_router)
 
     @app.get("/health", tags=["meta"])
     def health() -> dict[str, str]:
@@ -65,6 +67,6 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
 
 # Note: do NOT instantiate `app` at module import. Uvicorn launches the app
-# via `create_app` using `--factory`, so the default SQLite connection is
+# via `create_app` using `--factory`, so the default Postgres connections are
 # only opened when a real server starts — not during pytest collection or
 # `python -c "import apex_server.app"`.

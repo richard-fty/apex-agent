@@ -107,28 +107,37 @@ class WriteFileTool(BuiltinTool):
     parameters = [
         ToolParameter(name="path", type="string", description="Path to the file to write"),
         ToolParameter(name="content", type="string", description="Content to write to the file"),
+        ToolParameter(
+            name="emit_artifact",
+            type="boolean",
+            description="Whether to surface this write as a user-facing artifact card (default: true)",
+            required=False,
+            default=True,
+        ),
     ]
 
     async def execute(self, **kwargs: Any) -> str:
         path = kwargs["path"]
         content = kwargs["content"]
+        emit_artifact = kwargs.get("emit_artifact", True)
 
         p = Path(path).resolve()
         get_default_sandbox().write_file(str(p), content, encoding="utf-8")
 
         # Emit artifact event stream so UIs can render the new file live.
-        kind, language = _artifact_for_path(path)
-        artifact_id = await emit_artifact_created(
-            spec=ArtifactSpec(
-                kind=kind,
-                name=Path(path).name,
-                language=language,
-                description=f"Written to {path}",
+        if emit_artifact:
+            kind, language = _artifact_for_path(path)
+            artifact_id = await emit_artifact_created(
+                spec=ArtifactSpec(
+                    kind=kind,
+                    name=Path(path).name,
+                    language=language,
+                    description=f"Written to {path}",
+                )
             )
-        )
-        if artifact_id:
-            await emit_artifact_replace(artifact_id, content)
-            await emit_artifact_finalized(artifact_id)
+            if artifact_id:
+                await emit_artifact_replace(artifact_id, content)
+                await emit_artifact_finalized(artifact_id)
 
         return f"Written {len(content)} chars to {path}"
 

@@ -1,5 +1,9 @@
-"""FastAPI server that exposes the agent runtime over HTTP + SSE."""
-
-from apex_server.app import create_app
+"""FastAPI server package."""
 
 __all__ = ["create_app"]
+
+
+def create_app(*args, **kwargs):
+    from apex_server.app import create_app as _create_app
+
+    return _create_app(*args, **kwargs)
