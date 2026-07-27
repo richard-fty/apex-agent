@@ -11,3 +11,8 @@ strategies/
 rag_store/
 .tmp/
 .pytest_cache/
+__pycache__/
+*.py[cod]
+node_modules/
+.pnpm-store/
+.apex/

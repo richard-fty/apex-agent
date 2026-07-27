@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fbfbfa" />
+    <title>Apex Debug</title>
+    <link rel="stylesheet" href="/debug/styles.css" />
+  </head>
+  <body>
+    <div class="debug-shell">
+      <header class="topbar">
+        <a class="debug-brand" href="/" aria-label="返回 Apex Studio">
+          <img src="/apex-cat-logo.png" alt="" />
+          <span>Apex <b>Debug</b></span>
+        </a>
+
+        <nav class="view-tabs" aria-label="Debug views">
+          <button class="view-tab active" data-tab="trace">Trace</button>
+          <button class="view-tab" data-tab="outputs">
+            Outputs <span id="output-tab-count">0</span>
+          </button>
+          <button class="view-tab" data-tab="raw">Raw</button>
+        </nav>
+
+        <div class="runtime-bar">
+          <span id="runtime-dot" class="runtime-dot"></span>
+          <span id="runtime-state">Connecting</span>
+          <span class="runtime-divider"></span>
+          <strong id="runtime-model">Pi runtime</strong>
+          <span id="runtime-meta">Loading state…</span>
+          <button id="restart" class="quiet-button" title="Restart Pi">↻</button>
+          <form method="post" action="/debug/logout">
+            <button class="quiet-button" type="submit">Log out</button>
+          </form>
+        </div>
+      </header>
+
+      <main class="debug-workspace">
+        <aside class="runs-sidebar">
+          <div class="runs-heading">
+            <div><span>Agent runs</span><b id="run-count">0</b></div>
+            <button id="clear" class="quiet-button">Clear</button>
+          </div>
+          <div id="run-list" class="run-list">
+            <div class="empty small">
+              <strong>No runs</strong>
+              <span>Send a prompt to trace Apex.</span>
+            </div>
+          </div>
+        </aside>
+
+        <section class="debug-content">
+          <div id="trace-view" class="content-view">
+            <div id="run-summary" class="run-summary" hidden>
+              <div class="summary-main">
+                <span id="run-status" class="status-badge">idle</span>
+                <h1 id="trace-title">Agent trace</h1>
+              </div>
+              <div id="run-metrics" class="run-metrics"></div>
+              <div id="skill-routing" class="skill-routing"></div>
+            </div>
+            <div id="chain-view" class="chain-view">
+              <div class="empty">
+                <span class="empty-mark">⌁</span>
+                <strong>No agent trace yet</strong>
+                <p>Thinking、工具调用和最终回复会按时间顺序显示。</p>
+              </div>
+            </div>
+          </div>
+
+          <div id="outputs-view" class="content-view" hidden>
+            <div class="view-heading">
+              <div><span>CREATED BY APEX</span><h1>Outputs</h1></div>
+              <p>Images, video, music, renders and reproducible manifests.</p>
+            </div>
+            <div id="artifact-list" class="artifact-grid"></div>
+          </div>
+
+          <div id="raw-view" class="content-view raw-view" hidden>
+            <div class="view-heading raw-heading">
+              <div><span>JSONL EVENT STREAM</span><h1>Raw events</h1></div>
+              <div class="raw-controls">
+                <input id="raw-search" type="search" placeholder="Filter events…" />
+                <span id="raw-count">0</span>
+              </div>
+            </div>
+            <div id="raw-events" class="raw-events"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="debug-composer">
+        <textarea
+          id="prompt"
+          rows="1"
+          placeholder="Send a prompt to Apex for debugging…"
+        ></textarea>
+        <span>⌘ ↵</span>
+        <button id="abort" class="secondary-button">Abort</button>
+        <button id="send-prompt" class="primary-button">Run</button>
+      </footer>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/debug/app.js"></script>
+  </body>
+</html>

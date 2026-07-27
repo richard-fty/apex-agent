@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f2efe9" />
+    <title>Apex · AI 创作工作室</title>
+    <link rel="stylesheet" href="/studio.css" />
+  </head>
+  <body>
+    <div id="studio-shell" class="studio-shell">
+      <aside class="sidebar">
+        <div class="brand-row">
+          <a class="brand" href="/" aria-label="Apex home">
+            <img class="brand-glyph" src="/apex-cat-logo.png" alt="" />
+            <span><strong>Apex</strong></span>
+          </a>
+          <button id="sidebar-toggle" class="sidebar-toggle" title="收起侧边栏" aria-label="收起侧边栏">‹</button>
+        </div>
+
+        <nav class="main-nav" aria-label="主要导航">
+          <button class="nav-item active"><span>✦</span>创作空间</button>
+          <button class="nav-item" data-coming-soon><span>▱</span>素材库</button>
+          <button class="nav-item" data-coming-soon><span>♫</span>音乐库</button>
+        </nav>
+
+        <section class="projects">
+          <div class="section-label">
+            <span>最近创作</span>
+            <button id="new-project" title="开始新创作" aria-label="开始新创作">＋</button>
+          </div>
+          <div id="project-list" class="project-list">
+            <p class="sidebar-empty">你的作品会出现在这里</p>
+          </div>
+        </section>
+
+      </aside>
+
+      <main class="creative-space">
+        <header class="studio-header">
+          <div>
+            <span class="overline">AI CREATIVE AGENT</span>
+            <h1 id="project-title">新的创作</h1>
+          </div>
+          <div class="header-actions">
+            <button id="abort" class="ghost-button" hidden>停止</button>
+            <button id="share" class="outline-button" data-coming-soon>分享</button>
+          </div>
+        </header>
+
+        <div class="studio-body">
+          <section id="conversation" class="conversation">
+            <div id="welcome" class="welcome">
+              <div class="hero-orbit" aria-hidden="true">
+                <span class="orbit orbit-one"></span>
+                <span class="orbit orbit-two"></span>
+                <img class="hero-cat" src="/apex-cat-logo.png" alt="" />
+              </div>
+              <span class="hero-kicker">一只爱创作的 AI AGENT</span>
+              <h2>把脑海里的画面，<br />做成可以播放的作品。</h2>
+              <p>
+                Apex 是一只喜欢创作的小猫 Agent。告诉他一个故事、一句歌词或一种感觉，
+                他会陪你完成风格、分镜、画面、音乐，直到最终成片。
+              </p>
+              <div class="starter-grid">
+                <button class="starter-card" data-prompt="帮我做一个 30 秒的动漫风格 MV，主题是女孩追逐一列由星星组成的火车。先给我两个不同的创意方向。">
+                  <span class="starter-icon violet">◐</span>
+                  <strong>从一个故事开始</strong>
+                  <small>把想法变成动漫 MV</small>
+                </button>
+                <button class="starter-card" data-prompt="为我的动漫 MV 设计一位让人一眼记住的女主角。请先问我最关键的两个问题，然后给出角色方向。">
+                  <span class="starter-icon coral">✦</span>
+                  <strong>设计主角与世界</strong>
+                  <small>建立一致的角色和风格</small>
+                </button>
+                <button class="starter-card" data-prompt="我有一首情绪逐渐高涨的 90 秒音乐，帮我设计一个动漫风格的 MV 分镜和节奏结构。">
+                  <span class="starter-icon blue">♫</span>
+                  <strong>让音乐长出画面</strong>
+                  <small>从音乐发展镜头节奏</small>
+                </button>
+              </div>
+            </div>
+            <div id="run-view" class="run-view" hidden>
+              <div class="user-brief">
+                <span class="message-label">你的想法</span>
+                <p id="user-prompt"></p>
+              </div>
+              <article class="apex-response">
+                <div class="apex-avatar"><img src="/apex-cat-logo.png" alt="Apex 小猫 Agent" /></div>
+                <div class="response-body">
+                  <div class="response-heading">
+                    <strong>Apex</strong>
+                    <span id="response-state">正在理解你的想法</span>
+                  </div>
+                  <div id="inline-progress" class="inline-progress" hidden>
+                    <div class="inline-progress-copy">
+                      <span id="progress-label">正在准备创作</span>
+                      <b id="progress-value">0%</b>
+                    </div>
+                    <div class="inline-progress-track"><span id="progress-bar"></span></div>
+                  </div>
+                  <div id="activity-feed" class="activity-feed"></div>
+                  <div id="response-copy" class="response-copy"></div>
+                  <div id="response-caret" class="response-caret"></div>
+                  <section id="output-section" class="output-section inline-outputs" hidden>
+                    <div class="output-heading"><span>本轮创作成果</span><span id="output-count">0</span></div>
+                    <div id="output-list" class="output-list"></div>
+                  </section>
+                </div>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <footer class="composer-area">
+          <div class="prompt-chips">
+            <button data-chip="先给我 3 个风格差异明显的创意方向">三个创意方向</button>
+            <button data-chip="先做一张主角和场景的视觉测试">视觉测试</button>
+            <button data-chip="把它整理成有时间轴的分镜脚本">生成分镜</button>
+          </div>
+          <div class="composer">
+            <textarea id="prompt" rows="1" placeholder="描述你想创作的作品…"></textarea>
+            <div class="composer-meta">
+              <span>可以从一句歌词、一种情绪或一幅画面开始</span>
+              <button id="send" aria-label="发送给 Apex"><span>开始创作</span><b>↑</b></button>
+            </div>
+          </div>
+        </footer>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/studio.js"></script>
+  </body>
+</html>

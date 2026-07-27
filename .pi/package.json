@@ -1,0 +1,24 @@
+{
+  "name": "apex-pi-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cli": "pi",
+    "rpc": "pi --mode rpc",
+    "bridge": "node --experimental-strip-types bridge/server.ts",
+    "smoke:modal": "node scripts/smoke-modal-runtime.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.*"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.82.0",
+    "typebox": "1.1.38",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/ws": "8.18.1",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apex Anime MV"
+  short_description: "Plan and produce anime-style music videos"
+  default_prompt: "Use $apex-anime-mv to turn my idea into an anime MV production plan."

@@ -175,6 +175,26 @@ class Settings(BaseSettings):
             "environments where LocalSandbox is not an acceptable security posture."
         ),
     )
+    modal_app_name: str = Field(default="apex-sandbox", alias="MODAL_APP_NAME")
+    modal_sandbox_image: str = Field(
+        default="python:3.11-slim",
+        alias="MODAL_SANDBOX_IMAGE",
+    )
+    modal_sandbox_timeout_seconds: int = Field(
+        default=600,
+        alias="MODAL_SANDBOX_TIMEOUT_SECONDS",
+    )
+    modal_sandbox_cpu: float = Field(default=0.5, alias="MODAL_SANDBOX_CPU")
+    modal_sandbox_cpu_limit: float = Field(default=1.0, alias="MODAL_SANDBOX_CPU_LIMIT")
+    modal_sandbox_memory_mb: int = Field(default=512, alias="MODAL_SANDBOX_MEMORY_MB")
+    modal_sandbox_memory_limit_mb: int = Field(
+        default=1024,
+        alias="MODAL_SANDBOX_MEMORY_LIMIT_MB",
+    )
+    modal_remote_workspace: str = Field(
+        default="/workspace",
+        alias="MODAL_REMOTE_WORKSPACE",
+    )
 
 
 # Initialize settings

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -320,6 +321,162 @@ class DockerSandbox(BaseSandbox):
         return [Path(path) / name for name in names if name]
 
 
+class ModalSandbox(BaseSandbox):
+    """Modal-backed remote sandbox.
+
+    The Modal client is synchronous, so lifecycle and process operations are
+    moved off the asyncio event loop. Host paths inside ``workspace_root`` are
+    translated to the sandbox's ``remote_workspace_root``.
+    """
+
+    def __init__(
+        self,
+        *,
+        app_name: str = "apex-sandbox",
+        image: str = "python:3.11-slim",
+        workspace_root: str | None = None,
+        remote_workspace_root: str = "/workspace",
+        timeout_seconds: int = 600,
+        cpu: float = 0.5,
+        cpu_limit: float = 1.0,
+        memory_mb: int = 512,
+        memory_limit_mb: int = 1024,
+    ) -> None:
+        self.app_name = app_name
+        self.image = image
+        self.workspace_root = Path(workspace_root or Path.cwd()).resolve()
+        self.remote_workspace_root = Path(remote_workspace_root)
+        self.timeout_seconds = timeout_seconds
+        self.cpu = cpu
+        self.cpu_limit = cpu_limit
+        self.memory_mb = memory_mb
+        self.memory_limit_mb = memory_limit_mb
+        self._sandbox: Any | None = None
+        self.sandbox_id: str | None = None
+
+    def _load_modal(self) -> Any:
+        try:
+            import modal
+        except ImportError as exc:  # pragma: no cover - dependency/config error
+            raise RuntimeError(
+                "Modal backend requires `modal[api-proxy-support]`. "
+                "Install it with `uv add --package apex-agent-core "
+                "'modal[api-proxy-support]'`."
+            ) from exc
+        return modal
+
+    def _remote_path(self, path: str) -> str:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            return str(self.remote_workspace_root / candidate)
+        try:
+            relative = candidate.resolve().relative_to(self.workspace_root)
+        except ValueError:
+            remote_text = str(self.remote_workspace_root)
+            candidate_text = str(candidate)
+            if candidate_text == remote_text or candidate_text.startswith(remote_text + os.sep):
+                return candidate_text
+            raise ValueError(f"Path is outside the sandbox workspace: {path}")
+        return str(self.remote_workspace_root / relative)
+
+    def _provision_sync(self) -> None:
+        if self._sandbox is not None:
+            return
+        modal = self._load_modal()
+        app = modal.App.lookup(self.app_name, create_if_missing=True)
+        image = modal.Image.from_registry(self.image).run_commands(
+            f"mkdir -p {shlex.quote(str(self.remote_workspace_root))}"
+        )
+        self._sandbox = modal.Sandbox.create(
+            app=app,
+            image=image,
+            cpu=(self.cpu, self.cpu_limit),
+            memory=(self.memory_mb, self.memory_limit_mb),
+            timeout=self.timeout_seconds,
+        )
+        self.sandbox_id = self._sandbox.object_id
+
+    async def provision(self, resources: dict[str, Any] | None = None) -> None:
+        await asyncio.to_thread(self._provision_sync)
+
+    def _destroy_sync(self) -> None:
+        sandbox = self._sandbox
+        self._sandbox = None
+        self.sandbox_id = None
+        if sandbox is None:
+            return
+        try:
+            sandbox.terminate()
+        finally:
+            sandbox.detach()
+
+    async def destroy(self) -> None:
+        await asyncio.to_thread(self._destroy_sync)
+
+    def _assert_provisioned(self) -> Any:
+        if self._sandbox is None:
+            raise RuntimeError(
+                "ModalSandbox not provisioned. Call await sandbox.provision() first."
+            )
+        return self._sandbox
+
+    def _run_command_sync(self, command: str, timeout: int) -> SandboxCommandResult:
+        sandbox = self._assert_provisioned()
+        remote_root = shlex.quote(str(self.remote_workspace_root))
+        process = sandbox.exec(
+            "bash",
+            "-lc",
+            f"cd {remote_root} && {command}",
+            timeout=timeout,
+        )
+        stdout = process.stdout.read()
+        stderr = process.stderr.read()
+        process.wait()
+        return SandboxCommandResult(
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=process.returncode,
+        )
+
+    async def run_command(self, command: str, timeout: int) -> SandboxCommandResult:
+        await self.provision()
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._run_command_sync, command, timeout),
+                timeout=timeout + 5,
+            )
+        except asyncio.TimeoutError:
+            return SandboxCommandResult(stdout="", stderr="", exit_code=124, timed_out=True)
+
+    async def run_oneshot(
+        self,
+        command: str,
+        timeout: int,
+        *,
+        network: str = "none",
+    ) -> SandboxCommandResult:
+        return await self.run_command(command, timeout)
+
+    def read_file(self, path: str, *, encoding: str = "utf-8") -> str:
+        sandbox = self._assert_provisioned()
+        return sandbox.filesystem.read_text(self._remote_path(path))
+
+    def write_file(self, path: str, content: str, *, encoding: str = "utf-8") -> None:
+        sandbox = self._assert_provisioned()
+        remote_path = self._remote_path(path)
+        parent = str(Path(remote_path).parent)
+        sandbox.filesystem.make_directory(parent)
+        sandbox.filesystem.write_text(content, remote_path)
+
+    def list_dir(self, path: str) -> list[Path]:
+        sandbox = self._assert_provisioned()
+        remote_path = self._remote_path(path)
+        return [
+            Path(remote_path) / entry.name
+            for entry in sandbox.filesystem.list_files(remote_path)
+        ]
+
+
 _active_sandbox: ContextVar[BaseSandbox | None] = ContextVar("active_sandbox", default=None)
 _default_sandbox: BaseSandbox = LocalSandbox()
 
@@ -369,6 +526,18 @@ def create_session_sandbox(*, session_id: str, cwd: str | None = None) -> BaseSa
                     read_only=False,
                 )
             ],
+        )
+    if backend == "modal":
+        return ModalSandbox(
+            app_name=settings.modal_app_name,
+            image=settings.modal_sandbox_image,
+            workspace_root=str(workspace),
+            remote_workspace_root=settings.modal_remote_workspace,
+            timeout_seconds=settings.modal_sandbox_timeout_seconds,
+            cpu=settings.modal_sandbox_cpu,
+            cpu_limit=settings.modal_sandbox_cpu_limit,
+            memory_mb=settings.modal_sandbox_memory_mb,
+            memory_limit_mb=settings.modal_sandbox_memory_limit_mb,
         )
     if backend == "local":
         if settings.sandbox_require_isolation:

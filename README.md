@@ -85,6 +85,53 @@ docker compose stop postgres
 docker compose down
 ```
 
+## Apex Studio with Modal Pi + Sandbox
+
+The creator UI and administrator debugger stay in the local full-stack app.
+Pi runs as a scale-to-zero Modal Web Function, and its shell tool creates a
+separate short-lived Modal Sandbox only when a command needs to run.
+
+```bash
+# One-time local dependencies and Modal login
+uv sync
+cd .pi && npm install && cd ..
+uv run --package apex-agent-core modal setup
+
+# Deploy or update the remote Pi runtime
+.venv/bin/modal deploy infra/modal/apex_runtime.py
+```
+
+Copy the Web Function URL printed by Modal into `.env`:
+
+```bash
+APEX_PI_RUNTIME=modal
+APEX_MODAL_PI_URL=https://YOUR-WORKSPACE--apex-pi-runtime-pi-runtime.modal.run
+APEX_MODAL_PI_IDLE_MS=60000
+SANDBOX_BACKEND=modal
+```
+
+The local bridge derives its private runtime credential from the active Modal
+profile; it does not store the Modal token in `.env`. Start the local UI and
+debugger with:
+
+```bash
+cd .pi
+npm run bridge
+# Studio: http://127.0.0.1:8788/
+# Admin debug: http://127.0.0.1:8788/debug
+```
+
+Validate both the deployed Pi RPC and a real Modal Sandbox:
+
+```bash
+cd .pi
+npm run smoke:modal
+```
+
+Set `APEX_PI_RUNTIME=local` to use the retained local Pi fallback. Modal keeps
+no Pi container warm after the scale-down window, and each Sandbox terminates
+after its configured idle timeout.
+
 ## Project Structure
 
 ```

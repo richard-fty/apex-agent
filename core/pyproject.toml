@@ -25,6 +25,7 @@ dependencies = [
     "python-docx>=1.1.2",
     # Retrieval (workspace-external path dep)
     "rag-service",
+    "modal[api-proxy-support]>=1.5.3",
 ]
 
 [build-system]
