@@ -22,6 +22,10 @@ import {
   Search,
   Braces,
   TerminalSquare,
+  FolderOpen,
+  FileText,
+  Globe,
+  PanelRightClose,
 } from "lucide-react";
 
 const markdownComponents = {
@@ -72,6 +76,62 @@ export function ArtifactPanel({ sessionId }: { sessionId: string }) {
 
   if (ui.panel.kind === "closed" || !session) return null;
 
+  if (ui.panel.kind === "history") {
+    return (
+      <div
+        className="h-full flex flex-col border-l border-border bg-background"
+        style={{ width: `${ui.panelWidthPct}%`, minWidth: 320 }}
+      >
+        <div className="flex items-center justify-between border-b border-border px-4 py-2">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <FolderOpen className="h-4 w-4 text-muted-foreground" />
+            创作历史
+          </div>
+          <Button variant="ghost" size="icon" onClick={closePanel} aria-label="Close">
+            <PanelRightClose className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex-1 overflow-auto p-3">
+          {session.artifactOrder.length === 0 ? (
+            <p className="text-sm text-muted-foreground">还没有创作文件，和我先聊一聊吧。</p>
+          ) : (
+            <ArtifactHistory sessionId={sessionId} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (ui.panel.kind === "social") {
+    return (
+      <div
+        className="h-full flex flex-col border-l border-border bg-background"
+        style={{ width: `${ui.panelWidthPct}%`, minWidth: 460 }}
+      >
+        <div className="flex items-center justify-between border-b border-border px-4 py-2">
+          <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+            <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate">社媒 webview</span>
+            <span className="max-w-[260px] truncate text-xs text-muted-foreground">
+              {ui.panel.url}
+            </span>
+          </div>
+          <Button variant="ghost" size="icon" onClick={closePanel} aria-label="Close">
+            <PanelRightClose className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex-1">
+          <iframe
+            title="Apex social webview"
+            src={ui.panel.url}
+            className="h-full w-full border-0"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation"
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="h-full flex flex-col border-l border-border bg-background"
@@ -94,6 +154,46 @@ export function ArtifactPanel({ sessionId }: { sessionId: string }) {
           <ToolBody session={session} toolCallId={ui.panel.toolCallId} />
         )}
       </div>
+    </div>
+  );
+}
+
+function ArtifactHistory({ sessionId }: { sessionId: string }) {
+  const session = useStore((s) => s.sessions[sessionId]);
+  const openArtifact = useStore((s) => s.openArtifact);
+
+  if (!session) return null;
+
+  const items = [...session.artifactOrder].reverse();
+
+  return (
+    <div className="space-y-2">
+      {items.map((id) => {
+        const artifact = session.artifacts[id];
+        if (!artifact) return null;
+        return (
+          <button
+            key={artifact.id}
+            type="button"
+            onClick={() => openArtifact(artifact.id)}
+            className="w-full rounded-xl border border-border bg-secondary/30 p-3 text-left transition-colors hover:bg-secondary"
+          >
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{artifact.name}</div>
+                <div className="text-xs text-muted-foreground">
+                  {artifact.finalized ? "已完成" : "进行中"} · {artifact.kind}
+                </div>
+              </div>
+              <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" />
+            </div>
+          </button>
+        );
+      })}
+      <p className="mt-4 text-xs text-muted-foreground">
+        点击创作文件可直接在右侧预览，像微信“查看文件”一样快速回看过程。
+      </p>
     </div>
   );
 }

@@ -109,15 +109,29 @@ function detectSkillRoutes(text: string): Array<{
     /动漫|动画|二次元|分镜|镜头|生图|图像|视频|音乐|角色|风格|创作/i,
     /\banime\b|\bmv\b|music video|storyboard|shot list|image generation|video generation|music generation/i,
   ];
-  const matchedSignal = creativeSignals.find((pattern) => pattern.test(text));
-  if (!matchedSignal) return [];
-  return [
-    {
-      name: "apex-anime-mv",
-      status: "matched",
-      reason: `Apex creative router matched ${matchedSignal}`,
-    },
+  const companionSignals = [
+    /计划|日程|总结|整理|策略|运营|账号|内容|文案|写作|复盘|分析|研究|建议|问题|答疑|学习|翻译|会议|提案|项目管理|排期/,
+    /\bplan\b|\bstrategy\b|\bwriting\b|\bsummary\b|\bresearch\b|\banalysis\b|\boperate\b|\bassist\b/,
   ];
+  if (creativeSignals.some((pattern) => pattern.test(text))) {
+    return [
+      {
+        name: "apex-anime-mv",
+        status: "matched",
+        reason: "Apex creative router matched a production-style request",
+      },
+    ];
+  }
+  if (companionSignals.some((pattern) => pattern.test(text))) {
+    return [
+      {
+        name: "apex-companion",
+        status: "matched",
+        reason: "Apex companion router detected a general request",
+      },
+    ];
+  }
+  return [];
 }
 
 export default function apexCreative(pi: ExtensionAPI): void {

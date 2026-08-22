@@ -1,7 +1,10 @@
 const CREATIVE_SKILL = "apex-anime-mv";
+const COMPANION_SKILL = "apex-companion";
 const APEX_TOOL_PREFIX = "apex_";
 const CREATIVE_PATTERN =
   /动漫|动画|二次元|分镜|镜头|生图|图像|视频|音乐|角色|风格|创作|\banime\b|\bmv\b|music video|storyboard|shot list|image generation|video generation|music generation/i;
+const COMPANION_PATTERN =
+  /计划|日程|总结|整理|策略|运营|账号|内容|文案|写作|复盘|分析|研究|建议|问题|答疑|学习|翻译|会议|提案|项目管理|排期/;
 
 function nowFrom(message) {
   return message?.bridge_timestamp || new Date().toISOString();
@@ -97,6 +100,12 @@ function inferSkills(run) {
       name: CREATIVE_SKILL,
       status: "matched",
       reason: "Apex creative router matched the prompt",
+    });
+  } else if (COMPANION_PATTERN.test(run.prompt)) {
+    addSkill(run, {
+      name: COMPANION_SKILL,
+      status: "matched",
+      reason: "Apex companion router matched a general request",
     });
   }
 }

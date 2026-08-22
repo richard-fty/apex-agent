@@ -80,7 +80,9 @@ const emptySession = (): SessionState => ({
 export type PanelMode =
   | { kind: "closed" }
   | { kind: "artifact"; artifactId: string }
-  | { kind: "tool"; toolCallId: string };
+  | { kind: "tool"; toolCallId: string }
+  | { kind: "history" }
+  | { kind: "social"; url: string };
 
 interface State {
   user: User | null;
@@ -104,6 +106,8 @@ interface State {
   };
   openArtifact: (id: string) => void;
   openTool: (id: string) => void;
+  openHistory: () => void;
+  openSocial: (url: string) => void;
   closePanel: () => void;
   setArtifactView: (v: "preview" | "source") => void;
   setToolView: (v: "result" | "arguments") => void;
@@ -608,6 +612,14 @@ export const useStore = create<State>()((set, get) => ({
   openTool: (id) =>
     set((s) => ({
       ui: { ...s.ui, panel: { kind: "tool", toolCallId: id } },
+    })),
+  openHistory: () =>
+    set((s) => ({
+      ui: { ...s.ui, panel: { kind: "history" } },
+    })),
+  openSocial: (url) =>
+    set((s) => ({
+      ui: { ...s.ui, panel: { kind: "social", url } },
     })),
   closePanel: () => set((s) => ({ ui: { ...s.ui, panel: { kind: "closed" } } })),
   setArtifactView: (v) => set((s) => ({ ui: { ...s.ui, artifactView: v } })),

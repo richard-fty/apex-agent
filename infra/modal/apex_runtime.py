@@ -22,11 +22,104 @@ APP_NAME = "apex-pi-runtime"
 WORKSPACE_VOLUME_NAME = "apex-workspace"
 
 
+def _read_json(path: Path) -> dict[str, object] | None:
+    raw = _read_optional(path).strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _as_mapping(value: object) -> dict[str, object] | None:
+    return value if isinstance(value, dict) else None
+
+
 def _read_optional(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
+
+
+def _default_pi_models_json() -> str:
+    default = _read_json(PI_ROOT / "pi_models_default.json")
+    if not default:
+        return ""
+    return json.dumps(default, indent=2, ensure_ascii=False)
+
+
+def _has_valid_deepseek_models(providers: dict[str, object]) -> bool:
+    provider = _as_mapping(providers.get("deepseek"))
+    if not provider:
+        return False
+    models = provider.get("models")
+    if not isinstance(models, list) or not models:
+        return False
+    model_ids = {
+        item.get("id")
+        for item in models
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    return {"deepseek-chat", "deepseek-reasoner"}.issubset(model_ids)
+
+
+def _inject_deepseek_provider(raw_models_json: str) -> str:
+    defaults = _read_json(PI_ROOT / "pi_models_default.json")
+    if not defaults:
+        return raw_models_json
+
+    deepseek_default = _as_mapping(defaults.get("providers", {}).get("deepseek"))
+    if deepseek_default is None:
+        return raw_models_json
+
+    parsed = _read_json_string(raw_models_json)
+    if parsed is None:
+        # A malformed existing config should not block startup: fallback to defaults.
+        parsed = defaults
+
+    providers = _as_mapping(parsed.get("providers"))
+    if providers is None:
+        providers = {}
+        parsed["providers"] = providers
+
+    providers["deepseek"] = deepseek_default
+    return json.dumps(parsed, indent=2, ensure_ascii=False)
+
+
+def _read_json_string(raw: str) -> dict[str, object] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _resolve_pi_models_json() -> str:
+    explicit = os.getenv("APEX_PI_MODELS_JSON")
+    if explicit and explicit.strip():
+        return explicit.strip()
+
+    existing = _read_optional(Path.home() / ".pi" / "agent" / "models.json")
+    if not existing:
+        return _default_pi_models_json() if os.getenv("DEEPSEEK_API_KEY") else ""
+
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        return existing
+
+    parsed = _read_json(Path.home() / ".pi" / "agent" / "models.json")
+    providers = _as_mapping(parsed.get("providers")) if parsed else None
+    if parsed is None or providers is None:
+        return _default_pi_models_json()
+
+    if _has_valid_deepseek_models(providers):
+        return existing
+
+    return _inject_deepseek_provider(existing)
 
 
 def _local_runtime_secret() -> modal.Secret:
@@ -55,8 +148,10 @@ def _local_runtime_secret() -> modal.Secret:
         "APEX_MODAL_TOKEN_SECRET": token_secret,
         "APEX_RUNTIME_TOKEN": runtime_token,
         "APEX_PI_AUTH_JSON": _read_optional(Path.home() / ".pi" / "agent" / "auth.json"),
-        "APEX_PI_MODELS_JSON": _read_optional(Path.home() / ".pi" / "agent" / "models.json"),
+        "APEX_PI_MODELS_JSON": _resolve_pi_models_json(),
     }
+    if os.getenv("DEEPSEEK_API_KEY"):
+        values["DEEPSEEK_API_KEY"] = os.getenv("DEEPSEEK_API_KEY")
     return modal.Secret.from_dict(values)
 
 
@@ -72,6 +167,7 @@ pi_image = (
     .add_local_file(PI_ROOT / "package.json", "/app/.pi/package.json", copy=True)
     .run_commands("cd /app/.pi && npm install --omit=dev")
     .add_local_file(PI_ROOT / "SYSTEM.md", "/app/.pi/SYSTEM.md", copy=True)
+    .add_local_file(PI_ROOT / "pi_models_default.json", "/app/.pi/pi_models_default.json", copy=True)
     .add_local_dir(PI_ROOT / "extensions", "/app/.pi/extensions", copy=True)
     .add_local_dir(PI_ROOT / "skills", "/app/.pi/skills", copy=True)
     .add_local_dir(PI_ROOT / "remote", "/app/.pi/remote", copy=True)

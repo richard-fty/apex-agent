@@ -1,15 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
-import { useStore } from "../store";
+import { Bot, FolderOpen, Globe, Lightbulb, Sparkles } from "lucide-react";
+import { useStore, type SessionState } from "../store";
 import { useSSE } from "../hooks/useSSE";
 import { ChatPane } from "../components/chat/ChatPane";
 import { Composer } from "../components/chat/Composer";
 import { TurnNavigator } from "../components/chat/TurnNavigator";
 import { ArtifactPanel } from "../components/artifacts/ArtifactPanel";
 import { TopBar } from "../components/TopBar";
-import { SkillsStrip } from "../components/skills/SkillsStrip";
-import { SessionSidebar } from "../components/session/SessionSidebar";
 import { FinancialProfileForm } from "../components/onboarding/FinancialProfileForm";
 import { Button } from "../components/ui/button";
 import { getJSONOrNull, postJSON } from "../lib/api";
@@ -24,10 +23,13 @@ export function SessionPage() {
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
   const session = useStore((s) => (sessionId ? s.sessions[sessionId] : undefined));
   const panelKind = useStore((s) => s.ui.panel.kind);
+  const openHistory = useStore((s) => s.openHistory);
+  const openSocial = useStore((s) => s.openSocial);
   const [profile, setProfile] = useState<FinancialProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const lastAutoSocialUrl = useRef<string | null>(null);
 
   useEffect(() => {
     if (sessionId && !session) resetSession(sessionId);
@@ -63,7 +65,6 @@ export function SessionPage() {
 
   useSSE(sessionId ?? null);
 
-  // Empty state: no items sent yet in this session.
   const isEmpty = !session || session.items.length === 0;
   const latestAssistantMessage = useMemo(() => {
     if (!session) return null;
@@ -104,13 +105,21 @@ export function SessionPage() {
     return null;
   }, [session]);
 
-  if (!sessionId) return null;
+  const autoSocialUrl = detectAutoSocialUrl(session);
+  useEffect(() => {
+    if (!autoSocialUrl) return;
+    if (lastAutoSocialUrl.current === autoSocialUrl) return;
+    lastAutoSocialUrl.current = autoSocialUrl;
+    openSocial(autoSocialUrl);
+  }, [autoSocialUrl, openSocial]);
+
+  if (!sessionId || !session) return null;
 
   return (
     <div className="h-screen flex flex-col bg-background">
       <TopBar />
+      <ConversationToolbar onOpenHistory={openHistory} onOpenSocial={openSocial} />
       <div className="flex-1 flex overflow-hidden">
-        <SessionSidebar activeSessionId={sessionId} />
         <LayoutGroup id="session-layout">
           <div className="flex-1 flex flex-col min-w-0 relative">
             <AnimatePresence mode="wait">
@@ -173,6 +182,50 @@ export function SessionPage() {
   );
 }
 
+function ConversationToolbar({
+  onOpenHistory,
+  onOpenSocial,
+}: {
+  onOpenHistory: () => void;
+  onOpenSocial: (url: string) => void;
+}) {
+  const [socialUrl, setSocialUrl] = useState("https://x.com/home");
+
+  return (
+    <div className="border-b border-border bg-secondary/20 px-4 py-2">
+      <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Bot className="h-4 w-4 text-sky-400" />
+          <span>Apex 是有灵魂的创作伙伴，支持长期陪伴式创作和日常闲聊。</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onOpenHistory}>
+            <FolderOpen className="mr-2 h-4 w-4" />
+            创作历史
+          </Button>
+          <div className="flex items-center gap-2">
+            <input
+              value={socialUrl}
+              onChange={(event) => setSocialUrl(event.target.value)}
+              className="h-8 rounded-md border border-border bg-background px-2 text-xs w-56"
+              aria-label="社媒 webview 链接"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onOpenSocial(ensureAbsoluteUrl(socialUrl))}
+              className="whitespace-nowrap"
+            >
+              <Globe className="mr-2 h-4 w-4" />
+              打开社媒
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Empty-session hero: headline + composer centered vertically. The composer
  * is wrapped in a <motion.div layoutId="composer-shell"> so that when the
@@ -194,11 +247,12 @@ function EmptyHero({ sessionId }: { sessionId: string }) {
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
       >
-        <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-muted-foreground bg-clip-text text-transparent">
-          What can I help with?
+        <h1 className="text-3xl font-semibold tracking-tight flex items-center justify-center gap-2">
+          <Sparkles className="h-6 w-6 text-sky-400" />
+          我是 Apex，今天想做什么创作？
         </h1>
         <p className="text-sm text-muted-foreground mt-2">
-          Ask anything, create anything. Attach skills to specialize me for a domain.
+          你可以直接聊想法、发文件、让它做视频、音频、插画、运营文案，Apex 会持续记住我们现在的创作脉络。
         </p>
       </motion.div>
       <motion.div layoutId="composer-shell" className="w-full max-w-3xl" transition={SPRING}>
@@ -212,7 +266,12 @@ function EmptyHero({ sessionId }: { sessionId: string }) {
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.25, delay: 0.1 }}
       >
-        <SkillsStrip sessionId={sessionId} />
+        <div className="rounded-xl border border-border bg-secondary/30 px-4 py-3 text-xs text-muted-foreground">
+          <p className="flex items-center">
+            <Lightbulb className="mr-2 h-3.5 w-3.5" />
+            创作入口优先：发一句「给我做一个王家卫风格90年代都市动漫MV脚本」就能直接开干。
+          </p>
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -239,7 +298,7 @@ function PathChoiceComposer({
           <div className="mb-3">
             <div className="text-sm font-semibold">Choose a path</div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Pick one and Leverin will turn it into an action checklist.
+              Pick one and Apex will turn it into an action checklist.
             </p>
           </div>
           <div className="grid gap-2 sm:grid-cols-3">
@@ -297,7 +356,7 @@ function WealthIntakeComposer({
             <FinancialProfileForm
               initialValue={initialValue}
               title="Share annual income and deposit"
-              description="That is enough for Leverin to create a first-pass strategy. It will assume the rest."
+              description="That is enough for Apex to create a first-pass strategy. It will assume the rest."
               submitting={submitting}
               onSubmit={onSubmit}
             />
@@ -315,7 +374,7 @@ function ChatSurface({
   composerOverride,
 }: {
   sessionId: string;
-  composerOverride?: React.ReactNode;
+  composerOverride?: ReactNode;
 }) {
   return (
     <motion.div
@@ -330,7 +389,6 @@ function ChatSurface({
         <TurnNavigator sessionId={sessionId} />
       </div>
       <div className="shrink-0 bg-background">
-        <SkillsStrip sessionId={sessionId} />
         <motion.div layoutId="composer-shell" transition={SPRING}>
           {composerOverride ?? <Composer sessionId={sessionId} />}
         </motion.div>
@@ -375,4 +433,70 @@ function extractPathChoice(message: string | null): PathChoice[] | null {
     };
   });
   return choices;
+}
+
+function ensureAbsoluteUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "https://x.com/home";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function detectAutoSocialUrl(session: SessionState | undefined): string | null {
+  if (!session) return null;
+
+  for (const item of [...session.items].reverse()) {
+    let found: string | null = null;
+    if (item.kind === "assistant") {
+      found = extractSocialUrlFromText(item.content);
+    } else if (item.kind === "tool") {
+      const tc = session.toolCalls[item.toolCallId];
+      if (tc) found = extractSocialUrlFromArgs(tc.arguments);
+    }
+    if (found) return found;
+  }
+  return null;
+}
+
+function extractSocialUrlFromArgs(args: Record<string, unknown>): string | null {
+  const candidateKeys = ["url", "target", "link", "profile_url", "page", "site"];
+  for (const key of candidateKeys) {
+    const raw = args[key];
+    if (typeof raw === "string") {
+      const maybe = extractSocialUrlFromText(raw);
+      if (maybe) return maybe;
+    }
+  }
+  return null;
+}
+
+function extractSocialUrlFromText(text: string): string | null {
+  const urls = text.match(/https?:\/\/[^\s)]+/g) ?? [];
+  for (const candidate of urls) {
+    const normalized = stripTrailingPunct(candidate);
+    if (isApexSocialDomain(normalized)) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function isApexSocialDomain(url: string): boolean {
+  const lowered = url.toLowerCase();
+  return (
+    lowered.includes("x.com") ||
+    lowered.includes("twitter.com") ||
+    lowered.includes("instagram.com") ||
+    lowered.includes("facebook.com") ||
+    lowered.includes("threads.net") ||
+    lowered.includes("weibo.com") ||
+    lowered.includes("xiaohongshu.com") ||
+    lowered.includes("bilibili.com") ||
+    lowered.includes("tiktok.com") ||
+    lowered.includes("youtube.com")
+  );
+}
+
+function stripTrailingPunct(url: string): string {
+  return url.replace(/[)\]}>.,;:'"!?。，；”’]+$/, "");
 }

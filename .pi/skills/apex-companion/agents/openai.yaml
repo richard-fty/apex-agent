@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apex Companion"
+  short_description: "General planning, writing, operations, and Q&A support"
+  default_prompt: "Use $apex-companion to answer non-creative requests, planning, writing, analysis, and workflow questions."

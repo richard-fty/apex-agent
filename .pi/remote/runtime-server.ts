@@ -14,6 +14,7 @@ const cliPath = join(piRoot, "node_modules", ".bin", "pi");
 const creativeExtensionPath = join(piRoot, "extensions", "apex-creative.ts");
 const sandboxExtensionPath = join(piRoot, "extensions", "modal-sandbox.ts");
 const skillPath = join(piRoot, "skills", "apex-anime-mv", "SKILL.md");
+const companionSkillPath = join(piRoot, "skills", "apex-companion", "SKILL.md");
 const systemPromptPath = join(piRoot, "SYSTEM.md");
 const websocketServer = new WebSocketServer({ noServer: true });
 
@@ -63,14 +64,31 @@ async function installPiConfiguration(): Promise<void> {
   await mkdir(agentDir, { recursive: true });
   const authJson = process.env.APEX_PI_AUTH_JSON;
   const modelsJson = process.env.APEX_PI_MODELS_JSON;
+  const defaultModelsPath = join(piRoot, "pi_models_default.json");
   if (authJson) {
     await writeFile(join(agentDir, "auth.json"), `${authJson.trim()}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });
   }
-  if (modelsJson) {
-    await writeFile(join(agentDir, "models.json"), `${modelsJson.trim()}\n`, {
+  const normalizedModels = modelsJson?.trim();
+  if (normalizedModels) {
+    await writeFile(join(agentDir, "models.json"), `${normalizedModels}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    return;
+  }
+
+  const hasExistingModels = await readFile(join(agentDir, "models.json"), "utf8")
+    .then(() => true)
+    .catch(() => false);
+  if (hasExistingModels || !process.env.DEEPSEEK_API_KEY) {
+    return;
+  }
+  const defaultModelsJson = await readFile(defaultModelsPath, "utf8").catch(() => "");
+  if (defaultModelsJson.trim()) {
+    await writeFile(join(agentDir, "models.json"), `${defaultModelsJson.trim()}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -107,6 +125,8 @@ async function startPi(): Promise<void> {
       sandboxExtensionPath,
       "--skill",
       skillPath,
+      "--skill",
+      companionSkillPath,
       "--append-system-prompt",
       systemPrompt,
     ],

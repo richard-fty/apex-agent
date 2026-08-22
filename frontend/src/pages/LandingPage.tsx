@@ -18,7 +18,7 @@ export function LandingPage() {
 
         <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
           <Link to="/" className="text-sm font-semibold tracking-tight text-slate-950 dark:text-slate-50">
-            Leverin.ai
+            Apex
           </Link>
           <div className="flex items-center gap-3">
             <Button
@@ -37,14 +37,13 @@ export function LandingPage() {
         <div className="relative z-10 mx-auto flex min-h-[calc(88vh-76px)] max-w-6xl items-center px-6 pb-16">
           <div className="max-w-3xl">
             <div className="inline-flex border border-sky-200 bg-white/80 px-3 py-1 text-xs uppercase text-sky-800 shadow-sm shadow-sky-900/5 backdrop-blur dark:border-sky-300/25 dark:bg-white/10 dark:text-sky-100">
-              Stock investing analysis
+              Creative co-creation assistant
             </div>
             <h1 className="mt-6 text-5xl font-semibold leading-tight tracking-tight text-slate-950 md:text-7xl dark:text-slate-50">
-              Research a stock before the market moves.
+              你可以和它对话、迭代、发布，一个有生命感的创作搭档
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-700 dark:text-slate-200">
-              Leverin.ai turns a ticker into a focused briefing with latest company news,
-              real market data, technical indicators, risks, and source-backed context.
+              Apex 持续学习你的审美与风格偏好，能接管脚本、分镜、生图、配乐和发布文案的协同链路。
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button size="lg" asChild className="bg-slate-950 text-white shadow-lg shadow-sky-900/10 hover:bg-slate-800 hover:text-white dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100 dark:hover:text-slate-950">
@@ -77,12 +76,10 @@ export function LandingPage() {
                 Product intro
               </div>
               <h2 className="mt-4 max-w-xl text-3xl font-semibold tracking-tight text-slate-950 md:text-4xl dark:text-slate-50">
-                A cleaner way to ask, “What is happening with this stock?”
+                用会话驱动的方式，让创作从灵感到产出更顺畅
               </h2>
               <p className="mt-5 max-w-xl text-sm leading-7 text-slate-600 dark:text-slate-300">
-                The stock analysis skill follows a stable workflow: search the company&apos;s
-                latest news, fetch current market data, compute technical indicators, then
-                summarize the signal without pretending the future is certain.
+                Apex 会把每一轮消息转化为可追踪的工作流：脚本版本、分镜清单、素材参数、模型调用、发布清单连续打通。
               </p>
             </div>
 

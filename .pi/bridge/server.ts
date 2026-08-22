@@ -19,6 +19,9 @@ try {
 const port = Number.parseInt(process.env.APEX_PI_BRIDGE_PORT || "8788", 10);
 const cliPath = join(piDir, "node_modules", ".bin", "pi");
 const extensionPath = join(piDir, "extensions", "apex-creative.ts");
+const companionSkillPath = join(piDir, "skills", "apex-companion", "SKILL.md");
+const creativeSkillPath = join(piDir, "skills", "apex-anime-mv", "SKILL.md");
+const skillArgs = ["--skill", creativeSkillPath, "--skill", companionSkillPath];
 const apexAssetsRoot = resolve(projectDir, ".apex");
 const historyLimit = 1200;
 const debugSessionLifetimeMs = 12 * 60 * 60 * 1000;
@@ -258,7 +261,7 @@ function startLocalPi(): void {
   stdoutBuffer = "";
   child = spawn(
     cliPath,
-    ["--mode", "rpc", "--no-session", "--extension", extensionPath],
+    ["--mode", "rpc", "--no-session", "--extension", extensionPath, ...skillArgs],
     {
       cwd: projectDir,
       env: process.env,

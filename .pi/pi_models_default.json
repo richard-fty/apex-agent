@@ -1,0 +1,31 @@
+{
+  "providers": {
+    "deepseek": {
+      "name": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com",
+      "api": "openai-completions",
+      "apiKey": "$DEEPSEEK_API_KEY",
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "name": "DeepSeek Chat",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 16384,
+          "maxTokens": 4096
+        },
+        {
+          "id": "deepseek-reasoner",
+          "name": "DeepSeek Reasoner",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 16384,
+          "maxTokens": 4096,
+          "compat": {
+            "thinkingFormat": "deepseek"
+          }
+        }
+      ]
+    }
+  }
+}
